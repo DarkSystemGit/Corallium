@@ -9,4 +9,5 @@ byteorder = "1.5.0"
 hound = "3.5.1"
 minifb = { git ="https://github.com/DarkSystemGit/rust_minifb_pillarbox" }
 prompted = "0.2.8"
+rand = "0.9.2"
 tinyaudio = "2.0.0"

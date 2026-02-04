@@ -361,6 +361,13 @@ fn exec_bytecode(machine: &mut Machine) {
         //...args
         //prev arp
         //returnAddr
+        // R1
+        // R2
+        // R3
+        // R4
+        // R5
+        // F1
+        // F2
         //...vars
         // returnedBytes
         CommandType::Call => {
@@ -376,6 +383,34 @@ fn exec_bytecode(machine: &mut Machine) {
                 DataType::Int32(machine.core.ip as i32),
                 &mut machine.core.srp,
             );
+            machine
+                .core
+                .stack
+                .push(DataType::Int(machine.core.r1), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Int(machine.core.r2), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Int(machine.core.r3), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Int(machine.core.r4), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Int(machine.core.r5), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Float(machine.core.f1), &mut machine.core.srp);
+            machine
+                .core
+                .stack
+                .push(DataType::Float(machine.core.f2), &mut machine.core.srp);
             machine.core.ip = func as usize;
             if machine.debug {
                 println!("Call %{}", func);
@@ -389,6 +424,22 @@ fn exec_bytecode(machine: &mut Machine) {
                     ..machine.core.srp - args[0] as usize,
                 &mut machine.core.srp,
             );
+            for x in 0..7 {
+                let val = unpack_dt(machine.core.stack.remove(
+                    machine.core.srp - (args[0] as usize + 1),
+                    &mut machine.core.srp,
+                ));
+                match x {
+                    0 => machine.core.f2 = val as f32,
+                    1 => machine.core.f1 = val as f32,
+                    2 => machine.core.r5 = val as i16,
+                    3 => machine.core.r4 = val as i16,
+                    4 => machine.core.r3 = val as i16,
+                    5 => machine.core.r2 = val as i16,
+                    6 => machine.core.r1 = val as i16,
+                    _ => {}
+                }
+            }
             machine.core.ip = unpack_dt(machine.core.stack.remove(
                 machine.core.srp - (args[0] as usize + 1),
                 &mut machine.core.srp,

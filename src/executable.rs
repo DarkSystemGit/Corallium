@@ -1,12 +1,12 @@
-use crate::Bytecode::{
-    ArgCount, Argument, BlockLoc, Command, ConstantLoc, Float, FunctionRef, Int, Int32, Register,
-    SymbolSectionLen,
-};
-use crate::CommandType;
-use crate::CommandType::{Add, IO, Jump, Load, Mov, Push, R1, R2, R3};
 use crate::devices::disk::{Disk, DiskSection, DiskSectionType};
+use crate::executable::Bytecode::{
+    ArgCount, Argument, BlockLoc, Command, ConstantLoc, Float, FunctionRef, HeapStart, Int, Int32,
+    Register, SymbolSectionLen,
+};
 use crate::util::*;
-use std::collections::HashMap;
+use crate::vm::CommandType;
+use crate::vm::CommandType::{Add, IO, Jump, Load, Mov, Push, R1, R2, R3};
+use std::collections::{BinaryHeap, HashMap};
 pub struct Library {
     name: String,
     fns: Vec<Fn>,
@@ -146,6 +146,7 @@ pub enum Bytecode {
     SymbolSectionLen(),
     Argument(usize),
     ArgCount(),
+    HeapStart(),
 }
 #[derive(Debug, Clone)]
 pub enum Data {
@@ -185,6 +186,12 @@ impl ConstantTable {
             offset += constant.iter().map(|x| get_data_len(x)).sum::<usize>();
         }
         return 0;
+    }
+    fn len(&self) -> usize {
+        self.data_sec
+            .iter()
+            .map(|x| x.iter().map(|y| get_data_len(y)).sum::<usize>())
+            .sum::<usize>()
     }
     fn serialize(&self, base: usize) -> Vec<i16> {
         self.data_sec
@@ -236,53 +243,6 @@ impl Executable {
             //      next_mem+=i16::MAX
             //  }
             //}
-
-            //Assembly Pesudocode
-            //Load exec[0]->r2 //next_mem
-            //Load exec[1]->r3
-            //Load exec[3]->r4
-            //Add r3,r4->r1
-            //Load exec[5]->r4
-            //Add r1,r4->r1
-            //Push r1
-            //Sub r1,1->r1 //r1 is max range
-            //Copy r3->r4 //r5 is counter
-
-            //LCondition:
-            //Sub r1,r4->r1
-            //JumpZero loopEnd
-            //Load exec[3]->r1
-            //Add r3,r1->r1
-            //Sub r1,r4->r1
-            //JumpNotZero r1,DataEndConditon
-            //Load exec[2]->r1
-            //Mod r1,i16::Max->r1
-            //IO.disk.read r4,0,r1,r2 //section,addr,len,dist
-            //Add r2,r1->r2
-            //inc r4
-            //Jump LCondition
-
-            //DataEndCondtion:
-            //Pop r1
-            //Push r1
-            //Sub r1,1->r1
-            //Sub r4,r1->r1
-            //JumpNotZero r1,RegLoad
-            //Load exec[4]->r1
-            //Mod r1,i16::MAX
-            //IO.disk.read r4,0,r1,r2
-            //Add r2,r1->r2
-            //inc r4
-            //Jump LCondition
-
-            //RegLoad:
-            //IO.disk.read r4,0,i16::MAX,r2
-            //Add r2,i16::MAX->r2
-            //inc r4
-            //Jump LCondition
-
-            //loopEnd:
-            //Jump 256
             loader: Self::default_loader(512, 6),
             max_loader_len: 512,
         }
@@ -394,7 +354,7 @@ impl Executable {
         );
         println!("Bytecode Len: {}", bytecode.len() + 2);
         println!("Code Sector Count: {}", code_sectors);
-        println!("Data Len: {}", self.constants.serialize(0).len());
+        println!("Data Len: {}", self.constants.len());
         println!("Data Sector Count: {}", data_sectors);
         println!("-------Insertion Jump-------");
         println!("Jump to Entry Point: %{}", entrypoint);
@@ -620,13 +580,14 @@ impl Fn {
                         Bytecode::Symbol(name, offset) => {
                             let loc = self.symbol_table.get_symbol(name) as i32 + *offset;
                             if self.name != "main" {
-                                pack_i32(loc + 4) //arp & return addr
+                                pack_i32(loc + 2 + 2 + 5 + 4) //arp & return addr & registers r1-r5 then f1-f2
                             } else {
                                 pack_i32(loc)
                             }
                         }
                         Argument(arg) => pack_i32((*arg as i32) - (self.arg_count as i32)),
                         ArgCount() => pack_i32(self.arg_count as i32),
+                        HeapStart() => pack_i32((data_sec + consts.len()) as i32),
                     })
                     .collect::<Vec<Vec<i16>>>(),
             );
@@ -650,6 +611,7 @@ impl Fn {
                 SymbolSectionLen() => 4,
                 Argument(_a) => 4,
                 ArgCount() => 4,
+                HeapStart() => 4,
             })
             .collect::<Vec<usize>>()
             .iter()

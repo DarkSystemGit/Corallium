@@ -1,6 +1,6 @@
-use crate::Disk;
 use crate::devices::audio::AudioDevice;
 use crate::devices::clock::Clock;
+use crate::devices::disk::Disk;
 use crate::devices::gfx::GraphicsSystem;
 use crate::vm::Machine;
 pub mod audio;

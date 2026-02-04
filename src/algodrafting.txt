@@ -1,0 +1,417 @@
+struct HeapEntry {
+    size: i32,     //+0
+    is_free: bool, //+2
+    next: i32,     //+3
+    prev: i32,     //+5
+    data: [i16],   //+7
+}
+fn alloc(size: i32) -> ptr {
+    let ptr = 0;
+    while ptr != -1 {
+        let csize = readEx(ptr); //size
+        let nptr = readEx(ptr + 3); //next
+        if csize >= size && (read(ptr + 2) == true) {
+            if csize > size + 7 {
+                //split block
+                let next = ptr + 7 + size; //get block start, current+size+header
+                writeEx(next, csize - size - 7); //size
+                write(next + 2, true); //mark free
+                writeEx(next + 3, readEx(ptr + 3)); //next
+                writeEx(next + 5, ptr); //prev
+                writeEx(ptr + 3, next); //update current next
+                writeEx(ptr, size); //update current size
+                if nptr != -1 {
+                    writeEx(nptr + 5, next);
+                }
+            }
+            write(ptr + 2, false); //mark used, return ptr
+            break;
+        }
+        if nptr == -1 {
+            //alloc new block
+            let next = ptr + 7 + csize; //get block start, current+size+header
+            writeEx(next, size); //size
+            write(next + 2, false); //mark used, return ptr
+            writeEx(next + 3, -1); //next
+            writeEx(next + 5, ptr); //prev
+            writeEx(ptr + 3, next); //update current next
+            ptr = next; //return
+            break;
+        } else {
+            ptr = nptr; //continue searching
+        }
+    }
+    return ptr + 7;
+}
+fn alloc_asm(){
+    define_symbol (ptr: i32);
+    define_symbol (next: i32);
+    define_arg(size: i32);
+    loop:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;//loads ptr val to EX1
+    AddEx EX1 1; //ptr+1==0
+    Jz EX1 end;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //loads ptr val to EX1
+    LoadEX EX1 EX1;//loads ptr+0(block size) to EX1
+    PushEx EX1;
+    AddEx size ARP;
+    LoadEx EX1 EX2; //loads requested size into EX2
+    PopEx EX1; //reloads block size to ex1
+    Greater EX2 EX1;
+    Mov R1 R2;
+    Sub EX1 EX2;
+    Or R1 R2; //csize>=size?
+    AddEx ptr ARP;
+    AddEx EX1 2;
+    LoadEx EX1 EX1; //loads ptr+2 to EX1
+    And EX1 R1; //csize>=size && is_free?
+    Jz R1 block_alloc_condition:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //loads ptr val to EX1
+    LoadEX EX1 EX1;//loads ptr+0(block size) to EX1
+    PushEx EX1;
+    AddEx size ARP;
+    LoadEx EX1 EX1; //loads requested size to EX1
+    AddEx EX1 7;
+    PopEx EX2; //reloads block size to ex2
+    Greater EX2 EX1; //csize>size+7?
+    Jz R1 mark_free;
+    //split block
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    LoadEx EX1 EX1; //EX1= ptr.next
+    PushEx EX1;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 7; //ptr+7
+    Mov EX1 EX2;
+    AddEx size ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 EX2; //ptr+7+size
+    StoreEx next EX1; //set symbol next to ptr+7+size
+    PushEx EX1;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    LoadEx EX1 EX2; //current block size
+    AddEx size ARP;
+    LoadEx EX1 EX1;//size
+    SubEx EX2 EX1;
+    SubEx EX1 7; //csize-size-7
+    PopEx EX2;
+    StoreEx EX2 EX1; //set next.size = csize-size-7 or total size-(requested size+headers)
+    AddEx EX2 2;
+    StoreEx EX1 1; //set next.is_free = true
+    Mov EX1 EX2;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    LoadEx EX1 EX1; //get next.next val
+    PushEx EX1;
+    AddEx EX2 1;
+    PopEx EX2;
+    StoreEx EX1 EX2; //set next.next to ptr.next
+    AddEx EX1 2; //next+5
+    Mov EX1 EX2;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //load ptr
+    StoreEx EX2 EX1; //set next.prev to ptr
+    AddEx EX1 3;//ptr.next
+    PushEx EX1;
+    SubEx EX2 5;//EX1=Next
+    PopEx EX2;
+    StoreEx EX2 EX1; //ptr.next=next
+    SubEx EX2 3;//EX1=ptr
+    Mov EX1 EX2;
+    AddEx size ARP;
+    LoadEx EX1 EX1;//load size
+    StoreEx EX2 EX1; //ptr.size = size
+    PopEx EX1;//EX1=original ptr.next
+    PushEx EX1;
+    AddEx EX1 1;
+    Jz EX1 cleanup_split;
+    PopEx EX1;
+    AddEx EX1 5;//old next block's prev
+    Mov EX1 EX2;
+    AddEx next ARP;
+    LoadEx EX1 EX1;//load old next
+    StoreEx EX1 EX2; //old next.prev = next
+    Jmp mark_free;
+    cleanup_split:
+    PopEx EX1;
+    mark_free:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;//load ptr
+    AddEx 2 EX1; //ptr+2(is_free)
+    Store EX1 false;
+    Jmp end;
+    block_alloc_condition:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx 3 EX1; //ptr+3(next ptr)
+    LoadEx EX1 EX1; //loads next ptr to EX1
+    AddEx EX1 1;
+    Jnz EX1 continue_search;
+    //alloc new block
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //load ptr
+    AddEx 7 EX1; //add header len
+    PushEx EX1;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    LoadEx EX1 EX1; //ptr+0, block size
+    PopEx EX2; //ptr+7
+    AddEx EX2 EX1; //ptr+7+block size
+    Mov EX1 EX2;
+    AddEx size ARP;
+    LoadEx EX1 EX1;
+    StoreEx EX2 EX1; //write new block size
+    AddEx EX2 2; //next+2
+    Store EX1 0; //write false to next+2
+    AddEx EX1 1;//next+3
+    StoreEx EX1 -1; //write null to next+3
+    AddEx EX1 2; //next+5
+    PushEx EX1;
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //loads ptr val to EX1
+    PopEx EX2; //next+5
+    StoreEx EX2 EX1; //set new block prev to this block
+    AddEx EX1 3; //ptr+3(next ptr)
+    PushEx EX1;
+    SubEx EX2 5; //EX1=next
+    PopEx EX2;
+    StoreEx EX2 EX1; //set ptr+next to new block;
+    PushEx EX1;
+    AddEx ptr ARP;
+    PopEx EX2;
+    StoreEx EX1 EX2; //set ptr to next
+    Jmp end; //return ptr+7
+    continue_search:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx 3 EX1; //ptr+3(next ptr)
+    LoadEx EX1 EX2; //loads next ptr to EX2
+    AddEx ptr ARP;
+    StoreEx EX1 EX2; //update ptr to next ptr
+    Jmp loop;
+    end:
+    AddEx ptr ARP;
+    LoadEx EX1 EX1; //loads ptr val to EX1
+    AddEx EX1 7; //return ptr+7
+    PushEx EX1;
+    Return;
+}
+fn free_asm() {
+    define_arg(user_ptr: i32);
+    define_symbol(ptr: i32);
+    define_symbol(prev: i32);
+    define_symbol(next: i32);
+    define_symbol(nlen: i32);
+
+    // ptr = user_ptr - 7
+    AddEx user_ptr ARP;
+    LoadEx EX1 EX1;
+    SubEx EX1 7;
+    PushEx EX1;
+    AddEx ptr ARP;
+    PopEx EX2;
+    StoreEx EX1 EX2;
+
+    // mark free
+    AddEx EX2 2;
+    Store EX2 1;
+
+    // cache prev
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 5;
+    LoadEx EX1 EX2;
+    AddEx prev ARP;
+    StoreEx EX1 EX2;
+
+    // cache next
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    LoadEx EX1 EX2;
+    AddEx next ARP;
+    StoreEx EX1 EX2;
+
+    // check merge left: prev != -1 && prev.free
+    AddEx prev ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 1;
+    JumpZero R1 check_merge_right;
+
+    SubEx EX1 1;
+    AddEx EX1 2;
+    Load EX1 R1;
+    JumpZero R1 check_merge_right;
+
+    // perform left merge logic
+    // nlen = prev + ptr + 7
+    AddEx prev ARP;
+    LoadEx EX1 EX1;
+    LoadEx EX1 EX1;
+    AddEx ptr ARP;
+    LoadEx EX2 EX2;
+    LoadEx EX2 EX2;
+    AddEx EX1 EX2;
+    AddEx EX1 7;
+    PushEx EX1;
+    AddEx nlen ARP;
+    PopEx EX2;
+    StoreEx EX1 EX2;
+
+    // check 3-way: next != -1 && next.free
+    AddEx next ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 1;
+    JumpZero R1 commit_merge_left;
+
+    SubEx EX1 1;
+    AddEx EX1 2;
+    Load EX1 R1;
+    JumpZero R1 commit_merge_left;
+
+    // absorb next into nlen
+    AddEx next ARP;
+    LoadEx EX1 EX1;
+    LoadEx EX1 EX1;
+    AddEx EX1 7;
+    AddEx nlen ARP;
+    LoadEx EX2 EX2;
+    AddEx EX1 EX2;
+
+    // update local nlen
+    PushEx EX1;
+    AddEx nlen ARP;
+    PopEx EX2;
+    StoreEx EX1 EX2;
+
+    // advance next to skip middle (next = next->next)
+    AddEx next ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    LoadEx EX1 EX1;
+
+    // safe store: prevent register clobbering
+    PushEx EX1;
+    AddEx next ARP;
+    PopEx EX2;
+    StoreEx EX1 EX2;
+
+    commit_merge_left:
+    // prev.size = nlen
+    AddEx prev ARP;
+    LoadEx EX1 EX1;
+    AddEx nlen ARP;
+    LoadEx EX2 EX2;
+    StoreEx EX1 EX2;
+
+    // prev.next = next
+    AddEx prev ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    AddEx next ARP;
+    LoadEx EX2 EX2;
+    StoreEx EX1 EX2;
+
+    // if next != -1, next.prev = prev
+    AddEx EX2 1;
+    JumpZero R1 end;
+
+    SubEx EX2 1;
+    AddEx EX2 5;
+    PushEx EX2;
+    AddEx prev ARP;
+    LoadEx EX1 EX2;
+    PopEx EX1;
+    StoreEx EX1 EX2;
+
+    Jump end;
+
+    check_merge_right:
+    // check next valid/free
+    AddEx next ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 1;
+    JumpZero R1 end;
+
+    SubEx EX1 1;
+    AddEx EX1 2;
+    Load EX1 R1;
+    JumpZero R1 end;
+
+    // nlen = ptr + next + 7
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    LoadEx EX1 EX1;
+    AddEx next ARP;
+    LoadEx EX2 EX2;
+    LoadEx EX2 EX2;
+    AddEx EX1 EX2;
+    AddEx EX1 7;
+    PushEx EX1;
+
+    // ptr.size = nlen
+    AddEx ptr ARP;
+    LoadEx EX1 EX1;
+    PopEx EX2;
+    StoreEx EX1 EX2;
+
+    // ptr.next = next->next (far_next)
+    AddEx next ARP;
+    LoadEx EX1 EX1;
+    AddEx EX1 3;
+    LoadEx EX1 EX1;
+
+    AddEx ptr ARP;
+    LoadEx EX2 EX2;
+    AddEx EX2 3;
+    StoreEx EX2 EX1;
+
+    // if far_next != -1, far_next.prev = ptr
+    AddEx EX1 1;
+    JumpZero R1 end;
+
+    SubEx EX1 1;
+    AddEx EX1 5;
+    AddEx ptr ARP;
+    LoadEx EX2 EX2;
+    StoreEx EX1 EX2;
+
+    end:
+    Return;
+}
+fn free(ptr: ptr) {
+    let ptr = ptr - 7;
+    write(ptr + 2, true); //mark free
+    let prev = readEx(ptr + 5);
+    let next = readEx(ptr + 3);
+    if prev != -1 && read(prev + 2) == true {
+        //merge with prev
+        let nlen = readEx(prev) + readEx(ptr) + 7;
+        if next != -1 && read(next + 2) == true {
+            //merge with both prev and next
+            nlen += readEx(next) + 7;
+            next = readEx(next + 3);
+        }
+        writeEx(prev, nlen); //update prev size to new len
+        writeEx(prev + 3, next); //update prev next to new next
+        if next != -1 {
+            writeEx(next + 5, prev); //update next prev to new prev
+        }
+    } else if next != -1 && read(next + 2) == true {
+        //merge with next only
+        let nlen = readEx(ptr) + readEx(next) + 7; //current_size+header_size+next_size
+        let nextptr = readEx(next + 3); //new next
+        writeEx(ptr, nlen); //update current size to new size including next block
+        writeEx(ptr + 3, nextptr); //update current next to new next
+        if nextptr != -1 {
+            writeEx(nextptr + 5, ptr); //update next prev to this block
+        }
+    }
+}

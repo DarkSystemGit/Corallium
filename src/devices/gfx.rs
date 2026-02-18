@@ -1,5 +1,5 @@
 use crate::util::convert_i16_to_u32;
-use crate::vm::{Machine, unpack_dt};
+use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
 use minifb::{self, Key, Scale, Window, WindowOptions};
 use std::{cell::RefCell, rc::Rc, vec};
@@ -183,6 +183,25 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
             machine
                 .memory
                 .write_range(ptr..ptr + 11, key_b, &mut machine.core);
+        }
+        5 => {
+            //setPixel(x,y,color)
+            let x = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let y = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let color = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as u32;
+            let gs = get_gs(machine, device_id);
+            gs.set_pixel(x, y, color);
+        }
+        6 => {
+            //getPixel(x,y)
+            let x = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let y = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let gs = get_gs(machine, device_id);
+            let color = gs.get_pixel(x, y);
+            machine
+                .core
+                .stack
+                .push(DataType::Int32(color as i32), &mut machine.core.srp);
         }
         _ => {}
     }
@@ -495,6 +514,12 @@ impl GraphicsSystem {
         }
         self.atlas.borrow_mut().tiles[id as usize] = tile;
     }
+    pub fn set_pixel(&mut self, x: usize, y: usize, color: u32) {
+        self.display.buffer[y * self.display.width + x] = color;
+    }
+    pub fn get_pixel(&mut self, x: usize, y: usize) -> u32 {
+        self.display.buffer[y * self.display.width + x]
+    }
     pub fn add_sprite(&mut self, mut sprite: Sprite) -> u8 {
         sprite.id = self.sprites.1.len() as u8;
         self.sprites.1.push(Some(sprite));
@@ -739,7 +764,15 @@ impl TileAtlas {
             let tile_row_start = i * 8 + row_offset;
             for i in 0..copy_len {
                 if tile[tile_row_start + i] != 0 {
-                    buf[buf_idx + i] = tile[tile_row_start + i];
+                    let src = buf[buf_idx + i];
+                    let dst = tile[tile_row_start + i];
+                    let color = (0..4).fold(0, |acc, i| {
+                        acc | ((((src >> (i * 8)) & 0xff) * (src & 0xff)
+                            + ((dst >> (i * 8)) & 0xff) * (255 - (src & 0xff)))
+                            / 255)
+                            << (i * 8)
+                    });
+                    buf[buf_idx + i] = color;
                 }
             }
             //buf[buf_idx..buf_idx + copy_len].copy_from_slice(&tile[tile_row_start..tile_row_end]);
@@ -777,7 +810,15 @@ impl Display {
     fn render(&mut self) {
         if self.window.is_open() {
             self.window
-                .update_with_buffer(self.buffer.as_slice(), self.width, self.height)
+                .update_with_buffer(
+                    self.buffer
+                        .iter()
+                        .map(|x| x >> 8)
+                        .collect::<Vec<u32>>()
+                        .as_slice(),
+                    self.width,
+                    self.height,
+                )
                 .err();
         } else {
             return;

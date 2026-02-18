@@ -4,46 +4,70 @@ mod executable;
 mod test;
 mod util;
 mod vm;
-use compiler::parser::Parser;
+
+use compiler::lexer::Lexer;
 use test::run_cases;
-fn main() {
-    let src = r#"
-import "std";
+fn compiler() {
+    use compiler::ir::Compiler;
+    use compiler::parser::Parser;
+    let src = r#"import "std";
 enum Color {
     Red,
     Green,
     Blue
 }
 struct Person {
-    name: [char; 32],
+    name: [char; 4],
     age: u32,
     color: Color
 }
 union Shape{
-    circle: [f32;2],
+    circle: [f32;3],
     rectangle: [f32; 4]
 }
+type Man=Person;
+type Number = i32;
+fn mock_print_a()->void{}
+fn mock_print_b()->void{}
+fn mock_print_c()->void{}
 fn main() -> Person {
-println("Hello, world!");
-let x: i32 = 5;
-if(!(x + 3 -9 == 0) & x>0){
-    println("x is positive");
+
+let ix: i32 = 5;
+let x: Number = ix as Number;
+if(!((x as i16)+ 3-9 == 0) & (x as bool)==false){
+    mock_print_a();
 }
-let y: [&i32; 10] = [0, 10,11,12,0,0,0,0,0,0,0];
-let z: &i32 = &x;
-let w: &[i32; 10] = [0,0,0,0,0,0,0,0];
-let bob: Person = Person {
+//hi im a comment
+let y: [Number; 3] = [1,2,3];
+let z: &Number = &x;
+let w: [Number; 10] = [1,2,3,4,5,6,7,8,9,10];
+let bob: Person = Man {
     name: "Bob",
-    age: 30,
+    age: 30 as u32,
     color: Color::Red
 };
-let shape: Shape = Shape::Circle([1.0, 2.0]);
+let a: i32=w[1];
+let shape: Shape = Shape::circle([1.0, 2.0,3.0]);
+let shape_size: u32 = sizeof(Shape);
+match shape {
+    Shape::circle([x, y,_]) -> {
+        mock_print_b();
+    },
+    Shape::rectangle([x1, y1, x2, y2]) -> {
+        mock_print_c();
+    },
+};
 let bobref: &Person = &bob;
 return *bobref;
 }
         "#
     .to_string();
-    let mut parser = Parser::new(src, "src/test.micro".to_string());
-    let ast = parser.parse();
-    println!("{:?}", ast);
+    let mut compiler = Compiler::new("test.micro", src.clone());
+    compiler.compile();
+    println!("{:?}", compiler.functions);
+    let mut lexer = Lexer::new(src);
+    //println!("{:?}", lexer.lex());
+}
+fn main() {
+    compiler();
 }

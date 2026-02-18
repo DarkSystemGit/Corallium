@@ -92,8 +92,8 @@ fn gfx_case() -> TestCase {
     let atlas = exe.add_constant(vec![
         Data::Int(3),
         Data::Bytes(vec![0; 2 * 64]), //transparency
-        Data::Bytes(flatten_vec(vec![convert_u32_to_i16(0xFFFFFF); 64])),
-        Data::Bytes(flatten_vec(vec![convert_u32_to_i16(0xAAAFFF); 64])),
+        Data::Bytes(flatten_vec(vec![convert_u32_to_i16(0xFFFFFFFF); 64])),
+        Data::Bytes(flatten_vec(vec![convert_u32_to_i16(0xAABBCCFF); 64])),
     ]);
     let layer_data = exe.add_constant(vec![Data::Bytes(vec![1; 30 * 40])]);
     let matrix = gen_3d_matrix(0.0, 0.0, 10.0, 160.0, 0.0, 1.0, 240);

@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
+};
 
 use crate::compiler::lexer::{
     KeywordKind, Lexer, OperatorKind, SourceLocation, Token, TokenKind, TypeKind,
@@ -9,9 +12,81 @@ pub struct Parser {
     pos: usize,
     src: String,
     file_name: String,
-    struct_names: Vec<String>,
-    union_names: Vec<String>,
-    enum_names: Vec<String>,
+    type_table: TypeTable,
+}
+#[derive(Debug, Clone)]
+struct TypeTable {
+    types: Vec<HashMap<String, UserType>>,
+}
+impl TypeTable {
+    fn new() -> Self {
+        TypeTable {
+            types: vec![HashMap::new()],
+        }
+    }
+    fn enter_scope(&mut self) {
+        self.types.push(HashMap::new());
+    }
+    fn exit_scope(&mut self) {
+        self.types.pop();
+    }
+    fn insert(&mut self, name: String, user_type: UserType) {
+        self.types.last_mut().unwrap().insert(name, user_type);
+    }
+    fn lookup(&self, name: &str) -> Option<UserType> {
+        for scope in self.types.iter().rev() {
+            if let Some(r) = scope.get(name) {
+                return Some((*r).clone());
+            }
+        }
+        None
+    }
+    fn is_struct(&self, name: &str) -> bool {
+        self.is_type(
+            self.lookup(name).unwrap_or(UserType::None),
+            UserType::Struct,
+        )
+    }
+    fn is_union(&self, name: &str) -> bool {
+        self.is_type(self.lookup(name).unwrap_or(UserType::None), UserType::Union)
+    }
+    fn is_enum(&self, name: &str) -> bool {
+        self.is_type(self.lookup(name).unwrap_or(UserType::None), UserType::Enum)
+    }
+    fn is_alias(&self, name: &str) -> bool {
+        self.lookup(name)
+            .map_or(false, |t| matches!(t, UserType::Alias(_)))
+    }
+    fn is_type(&self, ty: UserType, match_type: UserType) -> bool {
+        if (match match_type {
+            UserType::Struct => matches!(ty, UserType::Struct),
+            UserType::Enum => matches!(ty, UserType::Enum),
+            UserType::Union => matches!(ty, UserType::Union),
+            _ => false,
+        }) {
+            true
+        } else if let UserType::Alias(kind) = ty {
+            match kind {
+                TypeKind::Enum(_) => matches!(match_type, UserType::Enum),
+                TypeKind::Pointer(ptr) => match *ptr {
+                    TypeKind::Struct(_) => matches!(match_type, UserType::Struct),
+                    TypeKind::Union(_) => matches!(match_type, UserType::Union),
+                    _ => false,
+                },
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+}
+#[derive(Debug, Clone)]
+enum UserType {
+    Struct,
+    Enum,
+    Union,
+    Alias(TypeKind),
+    None,
 }
 #[derive(Debug, Clone)]
 pub struct Statement {
@@ -32,8 +107,29 @@ pub enum StatementKind {
     Enum(EnumDeclaration),
     Union(UnionDeclaration),
     Import(ImportDeclaration),
+
     Break,
     Continue,
+}
+#[derive(Debug, Clone)]
+pub struct MatchExpression {
+    pub expr: Box<Expression>,
+    pub cases: Vec<MatchCase>,
+}
+#[derive(Debug, Clone)]
+pub struct MatchCase {
+    pub pattern: Pattern,
+    pub body: Statement,
+}
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    Identifier(String),
+    Union(String, String, Box<Pattern>),
+    Enum(String, String),
+    Array(Vec<Pattern>),
+    Struct(String, Vec<(String, Pattern)>),
+    Wildcard,
+    Literal(Literal),
 }
 #[derive(Debug, Clone)]
 pub struct Declaration {
@@ -56,6 +152,8 @@ pub enum Expression {
     Cast(TypeKind, Box<Expression>),
     AddressOf(String),
     Subscript(Box<Expression>, Box<Expression>),
+    Match(MatchExpression),
+    Sizeof(TypeKind),
 }
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -119,14 +217,14 @@ pub struct ReturnStatement {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub name: String,
-    pub params: HashMap<String, TypeKind>,
+    pub params: BTreeMap<String, TypeKind>,
     pub return_ty: TypeKind,
     pub body: Box<Statement>,
 }
 #[derive(Debug, Clone)]
 pub struct StructDeclaration {
     pub name: String,
-    pub fields: HashMap<String, TypeKind>,
+    pub fields: BTreeMap<String, TypeKind>,
 }
 #[derive(Debug, Clone)]
 pub struct EnumDeclaration {
@@ -136,7 +234,7 @@ pub struct EnumDeclaration {
 #[derive(Debug, Clone)]
 pub struct UnionDeclaration {
     pub name: String,
-    pub variants: HashMap<String, TypeKind>,
+    pub variants: BTreeMap<String, TypeKind>,
 }
 impl Parser {
     pub fn new(input: String, file_name: String) -> Self {
@@ -147,9 +245,7 @@ impl Parser {
             pos: 0,
             src: input,
             file_name,
-            union_names: Vec::new(),
-            struct_names: Vec::new(),
-            enum_names: Vec::new(),
+            type_table: TypeTable::new(),
         }
     }
     pub fn parse(&mut self) -> Vec<Statement> {
@@ -177,14 +273,16 @@ impl Parser {
             TokenKind::Keyword(KeywordKind::Import) => Some(self.parseImportDeclaration()?),
             TokenKind::Keyword(KeywordKind::Break) => Some(self.parseBreakStatement()?),
             TokenKind::Keyword(KeywordKind::Continue) => Some(self.parseContinueStatement()?),
+            TokenKind::Keyword(KeywordKind::Type) => Some(self.parseTypeDecl()?),
+            TokenKind::LeftBrace => Some(self.parseBlockStatement()?),
             _ => {
                 let loc = self.peek().loc.get_src_loc(&self.src);
                 let exp = self.parseExpression();
                 if exp.is_none() {
                     self.emitError(&format!(
-                    "Unexpected token, {:?}, expected one of: let, if, while, for, return, fn, struct, enum, union, import, or expression",
-                    self.input[self.pos].kind
-                ));
+                        "Unexpected token, {:?}, expected statement, or expression",
+                        self.input[self.pos].kind
+                    ));
                     while self.pos < self.input.len() && self.peek().kind != TokenKind::Semicolon {
                         self.next();
                     }
@@ -201,6 +299,122 @@ impl Parser {
                 }
             }
         }
+    }
+    fn parseMatch(&mut self) -> Option<Expression> {
+        let expr = Box::new(self.parseExpression()?);
+        let mut cases = vec![];
+        self.matchToken(TokenKind::LeftBrace)?;
+        while self.peek().kind != TokenKind::RightBrace {
+            let pat = self.parsePattern()?;
+            self.matchToken(TokenKind::Arrow)?;
+
+            let stmt = self.parseStatement()?;
+
+            cases.push(MatchCase {
+                pattern: pat,
+                body: stmt,
+            });
+            if self.peek().kind != TokenKind::RightBrace {
+                self.matchToken(TokenKind::Comma);
+            }
+        }
+        self.matchToken(TokenKind::RightBrace)?;
+        Some(Expression::Match(MatchExpression { expr, cases }))
+    }
+    fn parsePattern(&mut self) -> Option<Pattern> {
+        match self.peek().kind.clone() {
+            TokenKind::Identifier(ident) => {
+                self.next();
+                match ident.as_str() {
+                    "_" => Some(Pattern::Wildcard),
+                    _ => {
+                        if self.type_table.is_struct(&ident) {
+                            let mut fields = Vec::new();
+                            self.matchToken(TokenKind::LeftBrace)?;
+                            while self.peek().kind != TokenKind::RightBrace {
+                                let field = self.matchIdentifier()?;
+                                self.matchToken(TokenKind::Colon)?;
+                                let pat = self.parsePattern()?;
+                                fields.push((field, pat));
+                            }
+                            self.matchToken(TokenKind::RightBrace)?;
+                            Some(Pattern::Struct(ident, fields))
+                        } else {
+                            let mut name_unvariant_vec = ident.split("::").collect::<Vec<&str>>();
+                            let variant = name_unvariant_vec.pop()?;
+                            let name_unvariant = name_unvariant_vec.join("::");
+
+                            if self.type_table.is_union(&name_unvariant) {
+                                let actual_name =
+                                    match self.type_table.lookup(&name_unvariant).unwrap() {
+                                        UserType::Alias(ty) => match ty {
+                                            TypeKind::Union(name) => Some(name),
+                                            TypeKind::Enum(name) => Some(name),
+                                            _ => None,
+                                        },
+                                        UserType::Union => Some(name_unvariant.clone()),
+                                        UserType::Enum => Some(name_unvariant.clone()),
+                                        _ => None,
+                                    }
+                                    .unwrap();
+                                self.matchToken(TokenKind::LeftParen);
+
+                                let pat = self.parsePattern()?;
+                                self.matchToken(TokenKind::RightParen);
+                                Some(Pattern::Union(
+                                    actual_name,
+                                    variant.to_string(),
+                                    Box::new(pat),
+                                ))
+                            } else if self.type_table.is_enum(&name_unvariant) {
+                                let actual_name =
+                                    match self.type_table.lookup(&name_unvariant).unwrap() {
+                                        UserType::Alias(ty) => match ty {
+                                            TypeKind::Union(name) => Some(name),
+                                            TypeKind::Enum(name) => Some(name),
+                                            _ => None,
+                                        },
+                                        UserType::Union => Some(name_unvariant.clone()),
+                                        UserType::Enum => Some(name_unvariant.clone()),
+                                        _ => None,
+                                    }
+                                    .unwrap();
+                                Some(Pattern::Enum(actual_name, variant.to_string()))
+                            } else {
+                                Some(Pattern::Identifier(ident))
+                            }
+                        }
+                    }
+                }
+            }
+            TokenKind::LeftBracket => {
+                self.next();
+                let mut elements = Vec::new();
+                while self.peek().kind != TokenKind::RightBracket {
+                    elements.push(self.parsePattern()?);
+                    if self.peek().kind == TokenKind::RightBracket {
+                        break;
+                    }
+                    self.matchToken(TokenKind::Comma)?;
+                }
+                self.matchToken(TokenKind::RightBracket)?;
+                Some(Pattern::Array(elements))
+            }
+            TokenKind::Integer(i) => Some(Pattern::Literal(Literal::Int(i))),
+            TokenKind::Float(f) => Some(Pattern::Literal(Literal::Float(f))),
+            TokenKind::String(s) => Some(Pattern::Literal(Literal::String(s))),
+            TokenKind::Bool(b) => Some(Pattern::Literal(Literal::Bool(b))),
+            _ => None,
+        }
+    }
+    fn parseTypeDecl(&mut self) -> Option<Statement> {
+        self.next();
+        let name = self.matchIdentifier()?;
+        self.matchToken(TokenKind::Operator(OperatorKind::Assign));
+        let ty = self.matchType()?;
+        self.type_table.insert(name, UserType::Alias(ty));
+        self.matchToken(TokenKind::Semicolon)?;
+        None
     }
     fn parseBreakStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
@@ -235,7 +449,7 @@ impl Parser {
             .push(format!("{}::{}", name, variant_name.clone()));*/
             variants.push(variant_name);
         }
-        self.enum_names.push(name.clone());
+        self.type_table.insert(name.clone(), UserType::Enum);
         self.matchToken(TokenKind::RightBrace)?;
         Some(Statement {
             kind: StatementKind::Enum(EnumDeclaration { name, variants }),
@@ -246,9 +460,9 @@ impl Parser {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
         let name = self.matchIdentifier()?;
-        self.struct_names.push(name.clone());
+        self.type_table.insert(name.clone(), UserType::Struct);
         self.matchToken(TokenKind::LeftBrace)?;
-        let mut fields = HashMap::new();
+        let mut fields = BTreeMap::new();
         while self.peek().kind != TokenKind::RightBrace {
             let field_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -268,9 +482,9 @@ impl Parser {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
         let name = self.matchIdentifier()?;
-        self.union_names.push(name.clone());
+        self.type_table.insert(name.clone(), UserType::Union);
         self.matchToken(TokenKind::LeftBrace)?;
-        let mut variants = HashMap::new();
+        let mut variants = BTreeMap::new();
         while self.peek().kind != TokenKind::RightBrace {
             let variant_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -291,7 +505,7 @@ impl Parser {
         let loc = self.next().loc.get_src_loc(src);
         let name = self.matchIdentifier()?;
         self.matchToken(TokenKind::LeftParen)?;
-        let mut params = HashMap::new();
+        let mut params = BTreeMap::new();
         while self.peek().kind != TokenKind::RightParen {
             let param_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -412,9 +626,11 @@ impl Parser {
         let src = &self.src.clone();
         let loc = self.matchToken(TokenKind::LeftBrace)?.loc.get_src_loc(src);
         let mut statements = Vec::new();
+        self.type_table.enter_scope();
         while self.peek().kind != TokenKind::RightBrace {
             statements.push(self.parseStatement()?);
         }
+        self.type_table.exit_scope();
         self.matchToken(TokenKind::RightBrace)?;
         Some(Statement {
             kind: StatementKind::Block(statements),
@@ -422,44 +638,6 @@ impl Parser {
         })
     }
 
-    fn parseIdentifier(&mut self, ident: String) -> Option<Expression> {
-        if self.struct_names.contains(&ident) {
-            let mut fields = HashMap::new();
-            self.matchToken(TokenKind::LeftBrace);
-            while self.peek().kind != TokenKind::RightBrace {
-                let field_name = self.matchIdentifier()?;
-                self.matchToken(TokenKind::Colon);
-                let field_value = self.parseExpression()?;
-                fields.insert(field_name, field_value);
-                if self.peek().kind != TokenKind::RightBrace {
-                    self.matchToken(TokenKind::Comma)?;
-                }
-            }
-            self.matchToken(TokenKind::RightBrace);
-            Some(Expression::Literal(Literal::Struct(ident, fields)))
-        } else {
-            let mut name_unvariant_vec = ident.split("::").collect::<Vec<&str>>();
-            let variant = name_unvariant_vec.pop();
-            let name_unvariant = name_unvariant_vec.join("::");
-            if self.union_names.contains(&name_unvariant) {
-                self.matchToken(TokenKind::LeftParen);
-                let value = self.parseExpression()?;
-                self.matchToken(TokenKind::RightParen);
-                Some(Expression::Literal(Literal::Union(
-                    name_unvariant,
-                    variant?.to_string(),
-                    Box::new(value),
-                )))
-            } else if self.enum_names.contains(&name_unvariant) {
-                Some(Expression::Literal(Literal::Enum(
-                    name_unvariant,
-                    variant?.to_string(),
-                )))
-            } else {
-                Some(Expression::Identifier(ident))
-            }
-        }
-    }
     fn parseArray(&mut self) -> Option<Expression> {
         let mut elements = Vec::new();
         while !(self.peek().kind == TokenKind::RightBracket) {
@@ -498,27 +676,39 @@ impl Parser {
                 self.matchToken(TokenKind::RightParen)?;
                 Expression::Grouped(Box::new(expr))
             }
+            TokenKind::Keyword(KeywordKind::Match) => self.parseMatch()?,
             TokenKind::Operator(op) => {
-                let ((), r_bp) = self.prefix_binding_power(&op);
-                let rhs = self.parse_expr_bp(r_bp)?;
-                match op {
-                    OperatorKind::Not => Expression::Unary(UnaryOperator::Not, Box::new(rhs)),
-                    OperatorKind::Negate => Expression::Unary(UnaryOperator::Neg, Box::new(rhs)),
-                    OperatorKind::Ampersand => {
-                        if let Expression::Identifier(ident) = rhs {
-                            Expression::AddressOf(ident)
-                        } else {
-                            self.emitError("Address of operator can only be used with identifiers");
+                if op != OperatorKind::Sizeof {
+                    let ((), r_bp) = self.prefix_binding_power(&op);
+                    let rhs = self.parse_expr_bp(r_bp)?;
+                    match op {
+                        OperatorKind::Not => Expression::Unary(UnaryOperator::Not, Box::new(rhs)),
+                        OperatorKind::Negate => {
+                            Expression::Unary(UnaryOperator::Neg, Box::new(rhs))
+                        }
+                        OperatorKind::Ampersand => {
+                            if let Expression::Identifier(ident) = rhs {
+                                Expression::AddressOf(ident)
+                            } else {
+                                self.emitError(
+                                    "Address of operator can only be used with identifiers",
+                                );
+                                return None;
+                            }
+                        }
+                        OperatorKind::Asterisk => {
+                            Expression::Unary(UnaryOperator::Deref, Box::new(rhs))
+                        }
+                        _ => {
+                            self.emitError("Unexpected prefix operator");
                             return None;
                         }
                     }
-                    OperatorKind::Asterisk => {
-                        Expression::Unary(UnaryOperator::Deref, Box::new(rhs))
-                    }
-                    _ => {
-                        self.emitError("Unexpected prefix operator");
-                        return None;
-                    }
+                } else {
+                    self.matchToken(TokenKind::LeftParen);
+                    let r = self.matchType()?;
+                    self.matchToken(TokenKind::RightParen);
+                    Expression::Sizeof(r)
                 }
             }
             _ => {
@@ -583,6 +773,7 @@ impl Parser {
     fn prefix_binding_power(&self, op: &OperatorKind) -> ((), u8) {
         match op {
             OperatorKind::Not
+            | OperatorKind::Sizeof
             | OperatorKind::Negate
             | OperatorKind::Ampersand
             | OperatorKind::Asterisk => ((), 99),
@@ -593,6 +784,7 @@ impl Parser {
     fn infix_binding_power(&self, kind: &TokenKind) -> Option<(u8, u8)> {
         match kind {
             TokenKind::LeftParen => Some((100, 0)),
+            TokenKind::LeftBracket => Some((100, 0)),
             TokenKind::Keyword(KeywordKind::As) => Some((90, 91)),
             TokenKind::Operator(op) => match op {
                 OperatorKind::Asterisk | OperatorKind::Div | OperatorKind::Mod => Some((80, 81)),
@@ -601,6 +793,7 @@ impl Parser {
                 OperatorKind::Ampersand => Some((50, 51)),
                 OperatorKind::Xor => Some((40, 41)),
                 OperatorKind::Or => Some((30, 31)),
+                OperatorKind::Dot => Some((100, 0)),
                 OperatorKind::Eq
                 | OperatorKind::Neq
                 | OperatorKind::Lt
@@ -667,33 +860,140 @@ impl Parser {
             None
         }
     }
-    fn matchType(&mut self) -> Option<TypeKind> {
-        if let TokenKind::Type(t) = &(self.peek().kind) {
-            let tk_type = t.clone();
-            self.next();
-            Some(tk_type)
-        } else if let TokenKind::Identifier(ident) = &(self.peek().kind) {
-            if self.struct_names.contains(ident) {
-                let name = ident.clone();
-                self.next();
-                Some(TypeKind::Struct(name))
-            } else if self.union_names.contains(ident) {
-                let name = ident.clone();
-                self.next();
-                Some(TypeKind::Union(name))
-            } else if self.enum_names.contains(ident) {
-                let name = ident.clone();
-                self.next();
-                Some(TypeKind::Enum(name))
+    fn parseIdentifier(&mut self, ident: String) -> Option<Expression> {
+        if self.type_table.is_struct(&ident) {
+            let lookup = self.type_table.lookup(&ident).unwrap();
+            let name = match lookup {
+                UserType::Alias(ty) => match ty {
+                    TypeKind::Pointer(ptr) => {
+                        if let TypeKind::Struct(name) = *ptr {
+                            Some(name)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                },
+                UserType::Struct => Some(ident.clone()),
+                _ => None,
+            }
+            .unwrap();
+            let mut fields = HashMap::new();
+            self.matchToken(TokenKind::LeftBrace);
+            while self.peek().kind != TokenKind::RightBrace {
+                let field_name = self.matchIdentifier()?;
+                self.matchToken(TokenKind::Colon);
+                let field_value = self.parseExpression()?;
+                fields.insert(field_name, field_value);
+                if self.peek().kind != TokenKind::RightBrace {
+                    self.matchToken(TokenKind::Comma)?;
+                }
+            }
+            self.matchToken(TokenKind::RightBrace);
+            Some(Expression::Literal(Literal::Struct(name, fields)))
+        } else {
+            let mut name_unvariant_vec = ident.split("::").collect::<Vec<&str>>();
+            let variant = name_unvariant_vec.pop();
+            let name_unvariant = name_unvariant_vec.join("::");
+            if self.type_table.is_union(&name_unvariant) {
+                let actual_name = match self.type_table.lookup(&name_unvariant).unwrap() {
+                    UserType::Alias(ty) => match ty {
+                        TypeKind::Pointer(ptr) => {
+                            if let TypeKind::Union(name) = *ptr {
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    },
+                    UserType::Union => Some(name_unvariant.clone()),
+                    _ => None,
+                }
+                .unwrap();
+                self.matchToken(TokenKind::LeftParen);
+                let value = self.parseExpression()?;
+                self.matchToken(TokenKind::RightParen);
+                Some(Expression::Literal(Literal::Union(
+                    actual_name,
+                    variant?.to_string(),
+                    Box::new(value),
+                )))
+            } else if self.type_table.is_enum(&name_unvariant) {
+                let actual_name = match self.type_table.lookup(&name_unvariant).unwrap() {
+                    UserType::Alias(ty) => match ty {
+                        TypeKind::Union(name) => Some(name),
+                        _ => None,
+                    },
+                    UserType::Enum => Some(name_unvariant.clone()),
+                    _ => None,
+                }
+                .unwrap();
+                Some(Expression::Literal(Literal::Enum(
+                    actual_name,
+                    variant?.to_string(),
+                )))
             } else {
-                self.emitError(&format!("Expected type, found {:?}", self.peek().kind));
+                Some(Expression::Identifier(ident))
+            }
+        }
+    }
+    fn matchType(&mut self) -> Option<TypeKind> {
+        let next = self.peek().clone();
+        match next.kind {
+            TokenKind::Operator(OperatorKind::Ampersand) => {
+                self.next();
+                let inner_type = self.matchType()?;
+                Some(TypeKind::Pointer(Box::new(inner_type)))
+            }
+            TokenKind::LeftBracket => {
+                self.next();
+                let content = self.matchType()?;
+                self.matchToken(TokenKind::Semicolon);
+                let count = self.matchInteger()? as usize;
+                self.matchToken(TokenKind::RightBracket);
+                Some(TypeKind::Pointer(Box::new(TypeKind::Array(
+                    Box::new(content),
+                    count,
+                ))))
+            }
+            TokenKind::Type(t) => {
+                self.next();
+                Some(t)
+            }
+            TokenKind::Identifier(ident) => {
+                self.next();
+                let lookup = self.type_table.lookup(&ident);
+                if let Some(lookup) = lookup {
+                    match lookup {
+                        UserType::Alias(a) => Some(a),
+                        UserType::Struct => {
+                            Some(TypeKind::Pointer(Box::new(TypeKind::Struct(ident))))
+                        }
+                        UserType::Union => {
+                            Some(TypeKind::Pointer(Box::new(TypeKind::Union(ident))))
+                        }
+                        UserType::Enum => Some(TypeKind::Enum(ident)),
+                        UserType::None => None,
+                    }
+                } else {
+                    self.emitError(&format!("No such type {}", ident));
+                    None
+                }
+            }
+            _ => {
+                self.emitError(&format!("Expected type, got {:?}", next));
                 None
             }
-        } else if let TokenKind::Operator(OperatorKind::Ampersand) = &(self.peek().kind) {
+        }
+    }
+
+    fn matchInteger(&mut self) -> Option<i32> {
+        if let TokenKind::Integer(n) = self.peek().kind {
             self.next();
-            Some(TypeKind::Pointer(Box::new(self.matchType()?)))
+            Some(n)
         } else {
-            self.emitError(&format!("Expected type, found {:?}", self.peek().kind));
+            self.emitError(&format!("Expected int, found {:?}", self.peek().kind));
             None
         }
     }
@@ -701,6 +1001,7 @@ impl Parser {
         if self.peek().kind == kind {
             Some(self.next())
         } else {
+            println!("{:?}", &self.input[self.pos - 2..self.pos + 5]);
             self.emitError(&format!(
                 "Expected {:?}, found {:?}",
                 kind,

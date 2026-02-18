@@ -79,6 +79,7 @@ impl Lexer {
                     Token::new(TokenKind::Operator(OperatorKind::Not), start, start + 1)
                 }
             }
+
             '>' => {
                 if self.input.matchTk('=') {
                     Token::new(TokenKind::Operator(OperatorKind::Gte), start, start + 2)
@@ -111,7 +112,16 @@ impl Lexer {
                 start + 1,
             ),
             '.' => Token::new(TokenKind::Operator(OperatorKind::Dot), start, start + 1),
-            '/' => Token::new(TokenKind::Operator(OperatorKind::Div), start, start + 1),
+            '/' => {
+                if self.input.matchTk('/') {
+                    while self.input.peek() != Some('\n') {
+                        self.input.next();
+                    }
+                    Token::new(TokenKind::None, start, start)
+                } else {
+                    Token::new(TokenKind::Operator(OperatorKind::Div), start, start + 1)
+                }
+            }
             '%' => Token::new(TokenKind::Operator(OperatorKind::Mod), start, start + 1),
             '&' => {
                 let saved_pos = self.input.position;
@@ -251,6 +261,12 @@ impl Lexer {
                             start,
                             start + ident.len(),
                         )
+                    } else if ["sizeof"].contains(&ident.as_str()) {
+                        Token::new(
+                            TokenKind::Operator(OperatorKind::Sizeof),
+                            start,
+                            start + ident.len(),
+                        )
                     } else {
                         let len = ident.len();
                         Token::new(TokenKind::Identifier(ident), start, start + len)
@@ -269,7 +285,7 @@ fn is_whitespace(ch: char) -> bool {
     ch.is_whitespace()
 }
 fn is_alpha(ch: char) -> bool {
-    ch.is_alphabetic()
+    ch.is_alphabetic() || ch == '_'
 }
 fn is_alphanumeric(ch: char) -> bool {
     is_alpha(ch) || is_digit(ch)
@@ -291,6 +307,7 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "break" => Some(KeywordKind::Break),
         "continue" => Some(KeywordKind::Continue),
         "import" => Some(KeywordKind::Import),
+        "type" => Some(KeywordKind::Type),
         _ => None,
     }
 }
@@ -307,7 +324,10 @@ fn get_type(ident: &String, loc: &Location) -> Option<TypeKind> {
             let inner_type_str = ty_str.trim().to_string();
             let inner_type = get_type(&inner_type_str, loc)?;
             let length = len_str.trim().parse::<usize>().ok()?;
-            return Some(TypeKind::Array(Box::new(inner_type), length));
+            return Some(TypeKind::Pointer(Box::new(TypeKind::Array(
+                Box::new(inner_type),
+                length,
+            ))));
         } else {
             None
         }
@@ -320,6 +340,7 @@ fn get_type(ident: &String, loc: &Location) -> Option<TypeKind> {
             "f32" => Some(TypeKind::Float32),
             "char" => Some(TypeKind::Char),
             "void" => Some(TypeKind::Void),
+            "bool" => Some(TypeKind::Bool),
             _ => None,
         }
     }
@@ -369,7 +390,7 @@ pub struct Location {
     start: usize,
     end: usize,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SourceLocation {
     pub line: usize,
     pub col: usize,
@@ -445,6 +466,7 @@ pub enum KeywordKind {
     Break,
     Continue,
     Import,
+    Type,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {
@@ -467,6 +489,7 @@ pub enum OperatorKind {
     Shr,
     Assign,
     Dot,
+    Sizeof,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
@@ -477,11 +500,11 @@ pub enum TypeKind {
     Uint16,
     Uint32,
     Void,
+    Bool,
     Pointer(Box<TypeKind>),
     Array(Box<TypeKind>, usize),
     Struct(String),
     Union(String),
     Enum(String),
     Function(Vec<TypeKind>, Box<TypeKind>),
-    TaggedUnion(usize, Vec<TypeKind>),
 }

@@ -4,6 +4,7 @@ use crate::util::unpack_float;
 use crate::vm::Machine;
 use arc_swap::{ArcSwap, ArcSwapAny};
 use hound;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::{
     io::Cursor,
     sync::{
@@ -119,6 +120,7 @@ pub struct AudioDevice {
     old_vol: f32,
     master_volume: Arc<AtomicI32>,
     device: Option<OutputDevice>,
+    updates: Sender<(usize, ChannelUpdate)>,
 }
 impl std::fmt::Debug for AudioDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -132,6 +134,7 @@ impl std::fmt::Debug for AudioDevice {
 }
 impl AudioDevice {
     pub fn new() -> AudioDevice {
+        let (tx, rx) = channel::<(usize, ChannelUpdate)>();
         let mut a = AudioDevice {
             channels: mutex_channels(flatten_vec(vec![
                 gen_uninitialized_channels(gen_square_wave as WaveGenerator, 4, 10.0),
@@ -146,18 +149,20 @@ impl AudioDevice {
             old_vol: 1.0,
             master_volume: Arc::new(AtomicI32::new(100)),
             device: None,
+            updates: tx,
         };
-        a.run();
+        a.run(rx);
         a
     }
     pub fn update_channel(&self, id: usize, update: ChannelUpdate) {
-        modify_channel_collection_item(id, &(self.channels), update);
+        self.updates.send((id, update)).err();
+        //modify_channel_collection_item(id, &(self.channels), update);
     }
 
     pub fn set_master_volume(&self, volume: i32) {
         self.master_volume.store(volume, Relaxed);
     }
-    pub fn run(&mut self) {
+    pub fn run(&mut self, rx: Receiver<(usize, ChannelUpdate)>) {
         let params = OutputDeviceParameters {
             channels_count: 2,
             sample_rate: self.sample_rate as usize,
@@ -170,6 +175,7 @@ impl AudioDevice {
                     params.sample_rate as u32,
                     Arc::clone(&(self.channels)),
                     Arc::clone(&self.master_volume),
+                    rx,
                 ),
             )
             .expect("Could not initialize audio device"),
@@ -292,10 +298,14 @@ fn gen_wave(
     sample_rate: u32,
     channels: ChannelCollection,
     master_volume: Arc<AtomicI32>,
+    rx: Receiver<(usize, ChannelUpdate)>,
 ) -> impl FnMut(&mut [f32]) {
     let mut channel_clocks: Vec<f32> = vec![0.0; channels.len()];
     let mut loaded_channels = Vec::with_capacity(10);
     move |data| {
+        for (id, update) in rx.try_iter().take(50) {
+            modify_channel_collection_item(id, &channels, update);
+        }
         loaded_channels.clear();
         for channel in channels.iter() {
             loaded_channels.push(channel.load());

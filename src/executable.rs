@@ -6,7 +6,7 @@ use crate::executable::Bytecode::{
 use crate::util::*;
 use crate::vm::CommandType;
 use crate::vm::CommandType::{Add, IO, Jump, Load, Mov, Push, R1, R2, R3};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 pub struct Library {
     name: String,
     fns: Vec<Fn>,

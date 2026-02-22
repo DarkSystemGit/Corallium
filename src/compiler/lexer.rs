@@ -1,4 +1,3 @@
-use std::fmt::format;
 
 pub struct Lexer {
     input: InputStream,
@@ -212,8 +211,8 @@ impl Lexer {
                             || (self.input.peek().unwrap() == ':'
                                 && self.input.peek_next(1).unwrap() == ':'))
                     {
-                        if (self.input.peek().unwrap() == ':'
-                            && self.input.peek_next(1).unwrap() == ':')
+                        if self.input.peek().unwrap() == ':'
+                            && self.input.peek_next(1).unwrap() == ':'
                         {
                             ident.push_str("::");
                             self.input.next();

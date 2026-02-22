@@ -6,10 +6,9 @@ mod util;
 mod vm;
 
 use compiler::lexer::Lexer;
-use test::run_cases;
 fn compiler() {
-    use compiler::ir::Compiler;
-    use compiler::parser::Parser;
+    use compiler::backend::Backend;
+
     let src = r#"import "std";
 enum Color {
     Red,
@@ -60,12 +59,11 @@ match shape {
 let bobref: &Person = &bob;
 return *bobref;
 }
-        "#
-    .to_string();
-    let mut compiler = Compiler::new("test.micro", src.clone());
-    compiler.compile();
+        "#;
+    let mut compiler = Backend::new(src, "test.micro");
+    compiler.select_instructions();
     println!("{:?}", compiler.functions);
-    let mut lexer = Lexer::new(src);
+
     //println!("{:?}", lexer.lex());
 }
 fn main() {

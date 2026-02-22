@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    hash::Hash,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::compiler::lexer::{
     KeywordKind, Lexer, OperatorKind, SourceLocation, Token, TokenKind, TypeKind,
@@ -58,12 +55,12 @@ impl TypeTable {
             .map_or(false, |t| matches!(t, UserType::Alias(_)))
     }
     fn is_type(&self, ty: UserType, match_type: UserType) -> bool {
-        if (match match_type {
+        if match match_type {
             UserType::Struct => matches!(ty, UserType::Struct),
             UserType::Enum => matches!(ty, UserType::Enum),
             UserType::Union => matches!(ty, UserType::Union),
             _ => false,
-        }) {
+        } {
             true
         } else if let UserType::Alias(kind) = ty {
             match kind {
@@ -97,7 +94,7 @@ pub struct Statement {
 pub enum StatementKind {
     Expression(Expression),
     Declaration(Declaration),
-    Block(Vec<Statement>),
+    Block(Vec<Statement>, Option<Expression>),
     If(IfStatement),
     While(WhileStatement),
     For(ForStatement),
@@ -107,7 +104,7 @@ pub enum StatementKind {
     Enum(EnumDeclaration),
     Union(UnionDeclaration),
     Import(ImportDeclaration),
-
+    ImplictRet(Expression),
     Break,
     Continue,
 }
@@ -291,11 +288,18 @@ impl Parser {
                     }
                     None
                 } else {
-                    self.matchToken(TokenKind::Semicolon)?;
-                    Some(Statement {
-                        kind: StatementKind::Expression(exp.unwrap()),
-                        loc,
-                    })
+                    if self.peek().kind == TokenKind::Semicolon {
+                        self.next();
+                        Some(Statement {
+                            kind: StatementKind::Expression(exp.unwrap()),
+                            loc,
+                        })
+                    } else {
+                        Some(Statement {
+                            kind: StatementKind::ImplictRet(exp.unwrap()),
+                            loc,
+                        })
+                    }
                 }
             }
         }
@@ -630,10 +634,24 @@ impl Parser {
         while self.peek().kind != TokenKind::RightBrace {
             statements.push(self.parseStatement()?);
         }
+        let mut pop_stmt = false;
+        let implicit_return = statements
+            .last()
+            .map(|stmt| match stmt.kind.clone() {
+                StatementKind::ImplictRet(expr) => {
+                    pop_stmt = true;
+                    Some(expr)
+                }
+                _ => None,
+            })
+            .unwrap_or(None);
+        if pop_stmt {
+            statements.pop();
+        }
         self.type_table.exit_scope();
         self.matchToken(TokenKind::RightBrace)?;
         Some(Statement {
-            kind: StatementKind::Block(statements),
+            kind: StatementKind::Block(statements, implicit_return),
             loc,
         })
     }
@@ -1001,7 +1019,6 @@ impl Parser {
         if self.peek().kind == kind {
             Some(self.next())
         } else {
-            println!("{:?}", &self.input[self.pos - 2..self.pos + 5]);
             self.emitError(&format!(
                 "Expected {:?}, found {:?}",
                 kind,

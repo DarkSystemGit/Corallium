@@ -645,7 +645,7 @@ impl TileMap {
         matrices: &Vec<Matrix>,
         cam_center: Point,
     ) {
-        let buf_height = (buf.len() as u32 / buf_width);
+        let buf_height = buf.len() as u32 / buf_width;
         let center_x = (buf_width / 2) as f32;
         let center_y = (buf_height / 2) as f32;
 

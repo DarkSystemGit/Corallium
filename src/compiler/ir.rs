@@ -2,32 +2,33 @@ use super::parser::{
     BinaryOperator, EnumDeclaration, ForStatement, IfStatement, Pattern, ReturnStatement,
     StructDeclaration, UnaryOperator, UnionDeclaration, WhileStatement,
 };
-use crate::compiler::lexer::{
-    KeywordKind, Lexer, OperatorKind, SourceLocation, Token, TokenKind, TypeKind,
-};
+use crate::compiler::lexer::{SourceLocation, TypeKind};
 use crate::compiler::parser::{
     Declaration, Expression, FunctionDeclaration, Literal, Parser, Statement, StatementKind,
 };
+use rand::Rng;
 use rand::distr::Alphanumeric;
-use rand::{Rng, thread_rng};
 use std::collections::{BTreeMap, HashMap};
 #[derive(Clone, Debug)]
 pub struct Register {
-    id: u16,
-    ty: TypeKind,
+    pub id: u16,
+    pub ty: TypeKind,
+    pub start: [usize; 3],
+    pub end: Option<[usize; 3]>,
 }
 #[derive(Clone, Debug)]
 pub struct Immediate {
-    value: f64,
-    ty: TypeKind,
+    pub value: f64,
+    pub ty: TypeKind,
 }
 #[derive(Clone, Debug)]
 pub enum Value {
     Register(Register),
     Immediate(Immediate),
     Location(Location),
+    ARP,
 }
-type Output = Register;
+pub type Output = Register;
 #[derive(Clone, Debug)]
 pub enum Location {
     Block(usize),
@@ -63,44 +64,15 @@ pub enum Command {
     Pop(Output),
     Move(Value, Output),
 }
+
 #[derive(Clone, Debug)]
-struct RegisterManager {
-    registers: Vec<Register>,
-    next: u16,
-}
-impl RegisterManager {
-    fn new() -> Self {
-        RegisterManager {
-            registers: Vec::new(),
-            next: 0,
-        }
-    }
-    fn allocate_register(&mut self, ty: TypeKind) -> u16 {
-        let id = self.next;
-        let register = Register { id, ty };
-        self.registers.push(register);
-        self.next += 1;
-        id
-    }
-    fn get_register(&self, id: u16) -> Option<Register> {
-        Some((self.registers.iter().find(|x| x.id == id)?).clone())
-    }
-    fn deallocate_register(&mut self, id: u16) {
-        self.registers.retain(|x| x.id != id);
-    }
-    fn alloc_get(&mut self, ty: TypeKind) -> Option<Register> {
-        let x = self.allocate_register(ty);
-        self.get_register(x)
-    }
+pub struct Symbol {
+    pub name: String,
+    pub body: Definition,
+    pub id: usize,
 }
 #[derive(Clone, Debug)]
-struct Symbol {
-    name: String,
-    body: Definition,
-    id: usize,
-}
-#[derive(Clone, Debug)]
-enum Definition {
+pub enum Definition {
     User(UserType),
     Var(TypeKind),
     Function(TypeKind, usize),
@@ -112,17 +84,91 @@ enum UserType {
     Enum(Vec<String>),
     Union(BTreeMap<String, TypeKind>),
 }
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: String,
+    pub parameters: BTreeMap<String, TypeKind>,
+    pub body: Vec<Vec<Command>>,
+    jump_stack: Vec<[usize; 2]>,
+    current_block: usize,
+    loop_stack: Vec<[usize; 2]>,
+    loop_patches: HashMap<usize, Vec<usize>>,
+    pub symbols: Vec<Symbol>,
+}
 #[derive(Debug)]
-struct SymbolTable {
+pub struct IrGen {
+    input: Vec<Statement>,
+    pub functions: Vec<Function>,
+    pub imports: Vec<String>,
+    file_path: String,
+    current_fn: usize,
+    emit: bool,
     scopes: Vec<Vec<Symbol>>,
     next_id: usize,
+    next_fn_id: usize,
+    pub registers: Vec<Register>,
+    next_reg: u16,
 }
-impl SymbolTable {
-    fn new() -> Self {
-        SymbolTable {
+impl IrGen {
+    pub fn new(filename: &str, input: String) -> Self {
+        let mut parser = Parser::new(input, filename.to_string());
+        IrGen {
+            input: parser.parse(),
+            functions: vec![Function {
+                name: "_start".to_string(),
+                parameters: BTreeMap::new(),
+                body: vec![vec![]],
+                jump_stack: Vec::new(),
+                current_block: 0,
+                loop_stack: Vec::new(),
+                loop_patches: HashMap::new(),
+                symbols: Vec::new(),
+            }],
+            imports: Vec::new(),
+            file_path: filename.to_string(),
+            current_fn: 0,
+            emit: true,
             scopes: vec![Vec::new()],
             next_id: 0,
+            next_fn_id: 1,
+            registers: Vec::new(),
+            next_reg: 0,
         }
+    }
+    fn get_loc(&self) -> [usize; 3] {
+        [
+            self.current_fn,
+            self.functions[self.current_fn].current_block,
+            match self.functions[self.current_fn].body
+                [self.functions[self.current_fn].current_block]
+                .len()
+            {
+                0 => 0,
+                n => n - 1,
+            },
+        ]
+    }
+    fn allocate_register(&mut self, ty: TypeKind) -> u16 {
+        let id = self.next_reg;
+        let register = Register {
+            id,
+            ty,
+            start: self.get_loc(),
+            end: None,
+        };
+        self.registers.push(register);
+        self.next_reg += 1;
+        id
+    }
+    fn get_register(&self, id: u16) -> Option<Register> {
+        Some((self.registers.iter().find(|x| x.id == id)?).clone())
+    }
+    fn deallocate_register(&mut self, id: u16) {
+        (*self.registers.iter_mut().find(|x| x.id == id).unwrap()).end = Some(self.get_loc());
+    }
+    fn alloc_get(&mut self, ty: TypeKind) -> Option<Register> {
+        let x = self.allocate_register(ty);
+        self.get_register(x)
     }
     fn push_scope(&mut self) {
         self.scopes.push(Vec::new());
@@ -136,6 +182,7 @@ impl SymbolTable {
             body: Definition::Var(ty),
             id: self.next_id,
         };
+        self.functions[self.current_fn].symbols.push(symbol.clone());
         self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
     }
@@ -182,50 +229,6 @@ impl SymbolTable {
         }
         None
     }
-}
-#[derive(Debug)]
-pub struct Function {
-    name: String,
-    parameters: BTreeMap<String, TypeKind>,
-    body: Vec<Vec<Command>>,
-    jump_stack: Vec<[usize; 2]>,
-    current_block: usize,
-    loop_stack: Vec<[usize; 2]>,
-    loop_patches: HashMap<usize, Vec<usize>>,
-}
-#[derive(Debug)]
-pub struct Compiler {
-    symbol_table: SymbolTable,
-    register_manager: RegisterManager,
-    input: Vec<Statement>,
-    pub functions: Vec<Function>,
-    pub imports: Vec<String>,
-    file_path: String,
-    current_fn: usize,
-    emit: bool,
-}
-impl Compiler {
-    pub fn new(filename: &str, input: String) -> Self {
-        let mut parser = Parser::new(input, filename.to_string());
-        Compiler {
-            symbol_table: SymbolTable::new(),
-            register_manager: RegisterManager::new(),
-            input: parser.parse(),
-            functions: vec![Function {
-                name: "_start".to_string(),
-                parameters: BTreeMap::new(),
-                body: vec![vec![]],
-                jump_stack: Vec::new(),
-                current_block: 0,
-                loop_stack: Vec::new(),
-                loop_patches: HashMap::new(),
-            }],
-            imports: Vec::new(),
-            file_path: filename.to_string(),
-            current_fn: 0,
-            emit: true,
-        }
-    }
     pub fn compile(&mut self) {
         for stmt in self.input.clone().iter() {
             self.compile_statement(stmt.clone());
@@ -233,14 +236,15 @@ impl Compiler {
     }
     fn compile_block(&mut self, statements: Vec<Statement>) -> usize {
         let id = self.new_block();
-        self.symbol_table.push_scope();
+        self.push_scope();
         for statement in statements.iter() {
             self.compile_statement(statement.clone());
         }
-        self.symbol_table.pop_scope();
+        self.pop_scope();
         self.new_block();
         id
     }
+
     fn compile_statement(&mut self, statement: Statement) {
         //println!("Compiling statement: {:?}", statement.kind);
         match statement.kind {
@@ -250,7 +254,13 @@ impl Compiler {
             StatementKind::Declaration(declaration) => {
                 self.compile_declaration(declaration, statement.loc);
             }
-            StatementKind::Block(stmts) => {
+            StatementKind::ImplictRet(e) => {
+                self.emitError(
+                    statement.loc,
+                    "Expected semicolon after expression, got none",
+                );
+            }
+            StatementKind::Block(stmts, implict_ret) => {
                 self.compile_block(stmts);
             }
             StatementKind::Return(stmt) => {
@@ -289,19 +299,16 @@ impl Compiler {
         }
     }
     fn compile_struct(&mut self, structDef: StructDeclaration, loc: SourceLocation) {
-        self.symbol_table
-            .define_user_type(structDef.name, UserType::Struct(structDef.fields));
+        self.define_user_type(structDef.name, UserType::Struct(structDef.fields));
     }
     fn compile_union(&mut self, unionDef: UnionDeclaration, loc: SourceLocation) {
-        self.symbol_table
-            .define_user_type(unionDef.name, UserType::Union(unionDef.variants));
+        self.define_user_type(unionDef.name, UserType::Union(unionDef.variants));
     }
     fn compile_enum(&mut self, enumDef: EnumDeclaration, loc: SourceLocation) {
-        self.symbol_table
-            .define_user_type(enumDef.name, UserType::Enum(enumDef.variants));
+        self.define_user_type(enumDef.name, UserType::Enum(enumDef.variants));
     }
     fn compile_function(&mut self, func: FunctionDeclaration, loc: SourceLocation) {
-        self.symbol_table.define_function(
+        self.define_function(
             func.name.clone(),
             TypeKind::Function(
                 func.params.values().map(|x| x.clone()).collect(),
@@ -310,10 +317,11 @@ impl Compiler {
             self.current_fn + 1,
         );
         let curr_fn = self.current_fn;
-        self.current_fn += 1;
-        self.symbol_table.push_scope();
+        self.next_fn_id += 1;
+        self.current_fn = self.next_fn_id - 1;
+        self.push_scope();
         for (name, ty) in func.params.iter() {
-            self.symbol_table.define_parameter(name.clone(), ty.clone());
+            self.define_parameter(name.clone(), ty.clone());
         }
         self.functions.push(Function {
             name: func.name.clone(),
@@ -323,16 +331,17 @@ impl Compiler {
             current_block: 0,
             loop_stack: vec![],
             loop_patches: HashMap::new(),
+            symbols: Vec::new(),
         });
         self.compile_statement(*func.body);
-        self.symbol_table.pop_scope();
-        //self.current_fn = curr_fn;
+        self.pop_scope();
+        self.current_fn = curr_fn;
     }
     fn compile_expression(&mut self, expr: Expression, loc: SourceLocation) -> Option<Output> {
         match expr {
             Expression::Sizeof(ty) => {
                 let size = self.size_of(ty, loc)?;
-                let out = self.register_manager.alloc_get(TypeKind::Uint32)?;
+                let out = self.alloc_get(TypeKind::Uint32)?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {
                         value: size as f64,
@@ -347,7 +356,7 @@ impl Compiler {
                     let obj = self.compile_expression(*left, loc.clone())?;
                     if let TypeKind::Pointer(ptr) = obj.ty.clone() {
                         if let TypeKind::Struct(strct) = *ptr {
-                            let ty = self.symbol_table.lookup_symbol(&strct)?;
+                            let ty = self.lookup_symbol(&strct)?.clone();
                             if let Definition::User(UserType::Struct(utype)) = &ty.body {
                                 if let Expression::Identifier(property) = *right {
                                     let fieldTy = utype.get(&property);
@@ -357,10 +366,8 @@ impl Compiler {
                                                 "INTERNAL ERROR: Failed to calculate size of type",
                                             )
                                         });
-                                        let temp =
-                                            self.register_manager.alloc_get(TypeKind::Int32)?;
-                                        let reg =
-                                            self.register_manager.alloc_get(fieldTy.clone())?;
+                                        let temp = self.alloc_get(TypeKind::Int32)?;
+                                        let reg = self.alloc_get(fieldTy.clone())?;
                                         self.emit_instruction(Command::Add(
                                             Value::Immediate(Immediate {
                                                 value: offset as f64,
@@ -373,7 +380,7 @@ impl Compiler {
                                             Value::Register(temp.clone()),
                                             reg.clone(),
                                         ));
-                                        self.register_manager.deallocate_register(temp.id);
+                                        self.deallocate_register(temp.id);
                                         return Some(reg);
                                     } else {
                                         self.emitError(
@@ -430,91 +437,80 @@ impl Compiler {
                             | BinaryOperator::Le
                             | BinaryOperator::Ge
                     ) {
-                        self.register_manager.allocate_register(TypeKind::Bool)
+                        self.allocate_register(TypeKind::Bool)
                     } else {
-                        self.register_manager.allocate_register(outL.ty.clone())
+                        self.allocate_register(outL.ty.clone())
                     };
                     match op {
                         BinaryOperator::Add => self.emit_instruction(Command::Add(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Sub => self.emit_instruction(Command::Sub(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Mul => self.emit_instruction(Command::Mul(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Div => self.emit_instruction(Command::Div(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Mod => self.emit_instruction(Command::Mod(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::And => self.emit_instruction(Command::And(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
-                        BinaryOperator::Or => self.emit_instruction(Command::Or(
-                            left,
-                            right,
-                            self.register_manager.get_register(out)?,
-                        )),
+                        BinaryOperator::Or => {
+                            self.emit_instruction(Command::Or(left, right, self.get_register(out)?))
+                        }
                         BinaryOperator::Xor => self.emit_instruction(Command::Xor(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Shl => self.emit_instruction(Command::Shl(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
                         BinaryOperator::Shr => self.emit_instruction(Command::Shr(
                             left,
                             right,
-                            self.register_manager.get_register(out)?,
+                            self.get_register(out)?,
                         )),
-                        BinaryOperator::Eq => self.emit_instruction(Command::Eq(
-                            left,
-                            right,
-                            self.register_manager.get_register(out)?,
-                        )),
+                        BinaryOperator::Eq => {
+                            self.emit_instruction(Command::Eq(left, right, self.get_register(out)?))
+                        }
                         BinaryOperator::Ne => {
-                            self.register_manager.deallocate_register(out);
-                            out = self.register_manager.allocate_register(TypeKind::Bool);
-                            let temp = self.register_manager.alloc_get(TypeKind::Bool)?;
+                            self.deallocate_register(out);
+                            out = self.allocate_register(TypeKind::Bool);
+                            let temp = self.alloc_get(TypeKind::Bool)?;
                             self.emit_instruction(Command::Eq(left, right, temp.clone()));
                             let temp_val = self.convert_output_to_value(temp.clone());
-                            self.emit_instruction(Command::Not(
-                                temp_val,
-                                self.register_manager.get_register(out)?,
-                            ));
-                            self.register_manager.deallocate_register(temp.id);
+                            self.emit_instruction(Command::Not(temp_val, self.get_register(out)?));
+                            self.deallocate_register(temp.id);
                         }
-                        BinaryOperator::Lt => self.emit_instruction(Command::Lt(
-                            left,
-                            right,
-                            self.register_manager.get_register(out)?,
-                        )),
-                        BinaryOperator::Gt => self.emit_instruction(Command::Gt(
-                            left,
-                            right,
-                            self.register_manager.get_register(out)?,
-                        )),
+                        BinaryOperator::Lt => {
+                            self.emit_instruction(Command::Lt(left, right, self.get_register(out)?))
+                        }
+                        BinaryOperator::Gt => {
+                            self.emit_instruction(Command::Gt(left, right, self.get_register(out)?))
+                        }
                         BinaryOperator::Le => {
-                            let tempA = self.register_manager.alloc_get(outL.ty.clone())?;
-                            let tempB = self.register_manager.alloc_get(outL.ty.clone())?;
+                            let tempA = self.alloc_get(outL.ty.clone())?;
+                            let tempB = self.alloc_get(outL.ty.clone())?;
                             self.emit_instruction(Command::Lt(
                                 left.clone(),
                                 right.clone(),
@@ -529,15 +525,15 @@ impl Compiler {
                             self.emit_instruction(Command::Or(
                                 Value::Register(tempA.clone()),
                                 Value::Register(tempB.clone()),
-                                self.register_manager.get_register(out)?,
+                                self.get_register(out)?,
                             ));
-                            self.register_manager.deallocate_register(tempA.id);
-                            self.register_manager.deallocate_register(tempB.id);
+                            self.deallocate_register(tempA.id);
+                            self.deallocate_register(tempB.id);
                         }
 
                         BinaryOperator::Ge => {
-                            let tempA = self.register_manager.alloc_get(outL.ty.clone())?;
-                            let tempB = self.register_manager.alloc_get(outL.ty.clone())?;
+                            let tempA = self.alloc_get(outL.ty.clone())?;
+                            let tempB = self.alloc_get(outL.ty.clone())?;
                             self.emit_instruction(Command::Gt(
                                 left.clone(),
                                 right.clone(),
@@ -547,19 +543,19 @@ impl Compiler {
                             self.emit_instruction(Command::Or(
                                 Value::Register(tempA.clone()),
                                 Value::Register(tempB.clone()),
-                                self.register_manager.get_register(out)?,
+                                self.get_register(out)?,
                             ));
-                            self.register_manager.deallocate_register(tempA.id);
-                            self.register_manager.deallocate_register(tempB.id);
+                            self.deallocate_register(tempA.id);
+                            self.deallocate_register(tempB.id);
                         }
                         _ => {}
                     }
-                    self.register_manager.get_register(out)
+                    self.get_register(out)
                 }
             }
             Expression::Unary(op, expr) => {
                 let left = self.compile_expression(*expr, loc)?;
-                let mut out = self.register_manager.alloc_get(left.ty.clone())?;
+                let mut out = self.alloc_get(left.ty.clone())?;
                 let value_l = self.convert_output_to_value(left.clone());
                 match op {
                     UnaryOperator::Neg => {
@@ -571,18 +567,18 @@ impl Compiler {
                             }),
                             out.clone(),
                         ));
-                        self.register_manager.deallocate_register(left.id);
+                        self.deallocate_register(left.id);
                     }
                     UnaryOperator::Not => {
                         self.emit_instruction(Command::Not(value_l, out.clone()));
-                        self.register_manager.deallocate_register(left.id);
+                        self.deallocate_register(left.id);
                     }
                     UnaryOperator::Deref => {
                         if let TypeKind::Pointer(x) = left.ty {
-                            self.register_manager.deallocate_register(out.id);
-                            out = self.register_manager.alloc_get(*x)?;
+                            self.deallocate_register(out.id);
+                            out = self.alloc_get(*x)?;
                             self.emit_instruction(Command::Load(value_l, out.clone()));
-                            self.register_manager.deallocate_register(left.id);
+                            self.deallocate_register(left.id);
                         } else {
                             self.emitError(loc, "Cannot dereference non-pointer type");
                             return None;
@@ -600,9 +596,11 @@ impl Compiler {
                         let reg = self.compile_expression(arg, loc).unwrap_or(Register {
                             id: 0,
                             ty: TypeKind::Void,
+                            start: [0, 0, 0],
+                            end: None,
                         });
                         self.emit_instruction(Command::Push(Value::Register(reg.clone())));
-                        self.register_manager.deallocate_register(reg.id);
+                        self.deallocate_register(reg.id);
                         reg.ty
                     })
                     .collect::<Vec<TypeKind>>();
@@ -624,9 +622,9 @@ impl Compiler {
                         }
                     });
                     self.emit_instruction(Command::Call(Value::Register(func.clone()), argc));
-                    self.register_manager.deallocate_register(func.id);
+                    self.deallocate_register(func.id);
                     if ret_ty != TypeKind::Void {
-                        let ret_reg = self.register_manager.alloc_get(ret_ty.clone())?;
+                        let ret_reg = self.alloc_get(ret_ty.clone())?;
                         self.emit_instruction(Command::Pop(ret_reg.clone()));
                         return Some(ret_reg);
                     }
@@ -639,23 +637,27 @@ impl Compiler {
             Expression::Grouped(expr) => self.compile_expression(*expr, loc),
             Expression::Literal(lit) => self.compile_literal(lit, loc),
             Expression::Identifier(ident) => {
-                let symbol = self.symbol_table.lookup_symbol(&ident);
+                let symbol = self.lookup_symbol(&ident);
                 if let Some(symbol) = symbol {
                     if let Definition::Var(ty) = symbol.body.clone() {
                         let loc = Value::Location(Location::Symbol(symbol.id, 0));
-                        let reg = self.register_manager.alloc_get(ty)?;
-                        self.emit_instruction(Command::Load(loc, reg.clone()));
+                        let reg = self.alloc_get(ty.clone())?;
+                        let temp = self.alloc_get(TypeKind::Pointer(Box::new(ty)))?;
+                        self.emit_instruction(Command::Add(loc, Value::ARP, temp.clone()));
+                        self.emit_instruction(Command::Load(
+                            Value::Register(temp.clone()),
+                            reg.clone(),
+                        ));
+                        self.deallocate_register(temp.id);
                         Some(reg)
                     } else if let Definition::Function(func, id) = symbol.body.clone() {
                         let loc = Value::Location(Location::Function(id));
-                        let reg = self
-                            .register_manager
-                            .alloc_get(TypeKind::Pointer(Box::new(func)))?;
+                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(func)))?;
                         self.emit_instruction(Command::Move(loc, reg.clone()));
                         Some(reg)
                     } else if let Definition::Parameter(ty) = symbol.body.clone() {
                         let loc = Value::Location(Location::Argument(symbol.name.clone()));
-                        let reg = self.register_manager.alloc_get(ty)?;
+                        let reg = self.alloc_get(ty)?;
                         self.emit_instruction(Command::Load(loc, reg.clone()));
                         Some(reg)
                     } else {
@@ -668,34 +670,37 @@ impl Compiler {
                 }
             }
             Expression::Cast(ty, expr) => {
-                let out = self.register_manager.alloc_get(ty)?;
+                let out = self.alloc_get(ty)?;
                 let prev = self.compile_expression(*expr, loc)?;
                 self.emit_instruction(Command::Move(Value::Register(prev.clone()), out.clone()));
-                self.register_manager.deallocate_register(prev.id);
+                self.deallocate_register(prev.id);
                 Some(out)
             }
             Expression::AddressOf(ident) => {
-                let symbol = self.symbol_table.lookup_symbol(&ident);
+                let symbol = self.lookup_symbol(&ident);
                 if let Some(symbol) = symbol {
                     if let Definition::Var(ty) = symbol.body.clone() {
                         let loc = Value::Location(Location::Symbol(symbol.id, 0));
-                        let reg = self
-                            .register_manager
-                            .alloc_get(TypeKind::Pointer(Box::new(ty)))?;
-                        self.emit_instruction(Command::Move(loc, reg.clone()));
+                        let temp = self.alloc_get(TypeKind::Pointer(Box::new(ty.clone())))?;
+                        self.emit_instruction(Command::Add(loc, Value::ARP, temp.clone()));
+                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(ty)))?;
+                        self.emit_instruction(Command::Move(
+                            Value::Register(temp.clone()),
+                            reg.clone(),
+                        ));
+                        self.deallocate_register(temp.id);
                         Some(reg)
                     } else if let Definition::Function(ret, id) = symbol.body.clone() {
                         let loc = Value::Location(Location::Function(id));
-                        let reg = self.register_manager.alloc_get(TypeKind::Pointer(Box::new(
-                            TypeKind::Function(
+                        let reg =
+                            self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Function(
                                 self.functions[id]
                                     .parameters
                                     .values()
                                     .map(|param| param.clone())
                                     .collect(),
                                 Box::new(ret),
-                            ),
-                        )))?;
+                            ))))?;
                         self.emit_instruction(Command::Move(loc, reg.clone()));
                         Some(reg)
                     } else {
@@ -717,25 +722,23 @@ impl Compiler {
                         });
                         let indexR = self.compile_expression(*index, loc)?;
                         let index = self.convert_output_to_value(indexR.clone());
-                        let offset = self.register_manager.alloc_get(TypeKind::Int32)?;
+                        let offset = self.alloc_get(TypeKind::Int32)?;
                         self.emit_instruction(Command::Mul(index, size, offset.clone()));
-                        self.register_manager.deallocate_register(indexR.id);
-                        let addr = self
-                            .register_manager
-                            .alloc_get(TypeKind::Pointer(Box::new(*ty.clone())))?;
+                        self.deallocate_register(indexR.id);
+                        let addr = self.alloc_get(TypeKind::Pointer(Box::new(*ty.clone())))?;
                         self.emit_instruction(Command::Add(
                             Value::Register(arrayptr.clone()),
                             Value::Register(offset.clone()),
                             addr.clone(),
                         ));
-                        self.register_manager.deallocate_register(offset.id);
-                        self.register_manager.deallocate_register(arrayptr.id);
-                        let value = self.register_manager.alloc_get(*ty)?;
+                        self.deallocate_register(offset.id);
+                        self.deallocate_register(arrayptr.id);
+                        let value = self.alloc_get(*ty)?;
                         self.emit_instruction(Command::Load(
                             Value::Register(addr.clone()),
                             value.clone(),
                         ));
-                        self.register_manager.deallocate_register(addr.id);
+                        self.deallocate_register(addr.id);
                         Some(value)
                     } else {
                         self.emitError(loc, "Type mismatch, expected array");
@@ -748,8 +751,10 @@ impl Compiler {
             }
             Expression::Match(match_expr) => {
                 let val = self.compile_expression(*match_expr.expr, loc)?;
+                let mut end_id = Vec::new();
+                let mut ret: Option<Register> = None;
                 for case in match_expr.cases {
-                    self.symbol_table.push_scope();
+                    self.push_scope();
                     let pat = Value::Register(self.compile_pattern(
                         case.pattern,
                         val.clone(),
@@ -758,23 +763,58 @@ impl Compiler {
                     )?);
                     self.emit_instruction(Command::JumpFalse(Location::None, pat.clone()));
                     let jump = self.get_last_jump_id();
-                    self.compile_statement(case.body);
+                    match case.body.kind {
+                        StatementKind::ImplictRet(return_expr) => {
+                            let val = self.compile_expression(return_expr, loc)?;
+                            if ret.is_none() {
+                                ret = self.alloc_get(val.ty.clone());
+                            }
+                            self.emit_instruction(Command::Move(
+                                Value::Register(val),
+                                ret.clone().unwrap(),
+                            ));
+                        }
+                        StatementKind::Block(stmts, return_expr) => {
+                            self.compile_block(stmts);
+                            if let Some(return_expr) = return_expr {
+                                let val = self.compile_expression(return_expr, loc)?;
+                                if ret.is_none() {
+                                    ret = self.alloc_get(val.ty.clone());
+                                }
+                                if val.ty != ret.clone().unwrap().ty {
+                                    self.emitError(loc, &format!("Type mismatch, expected block to return {:?}, got {:?}",ret.clone().unwrap().ty,val.ty));
+                                }
+                                self.emit_instruction(Command::Move(
+                                    Value::Register(val),
+                                    ret.clone().unwrap(),
+                                ));
+                            }
+                        }
+                        _ => self.compile_statement(case.body),
+                    }
                     let nb = self.current_block() + 1;
+                    self.emit_instruction(Command::Jump(Location::None));
+                    end_id.push(self.get_last_jump_id());
                     self.update_jump(jump, Command::JumpFalse(Location::Block(nb), pat));
-                    self.symbol_table.pop_scope();
+                    self.pop_scope();
                 }
-                None
+                self.new_block();
+                let current_loc = self.current_block();
+                for j in end_id {
+                    self.update_jump(j, Command::Jump(Location::Block(current_loc)));
+                }
+                ret
             }
         }
     }
     fn compile_literal(&mut self, lit: Literal, loc: SourceLocation) -> Option<Output> {
         match lit {
             Literal::Int(value) => {
-                let ty = match ((value > (i16::MAX as i32)) || (value < (i16::MIN as i32))) {
+                let ty = match (value > (i16::MAX as i32)) || (value < (i16::MIN as i32)) {
                     true => TypeKind::Int32,
                     false => TypeKind::Int16,
                 };
-                let out = self.register_manager.alloc_get(ty.clone())?;
+                let out = self.alloc_get(ty.clone())?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {
                         value: value as f64,
@@ -785,7 +825,7 @@ impl Compiler {
                 Some(out)
             }
             Literal::Bool(val) => {
-                let out = self.register_manager.alloc_get(TypeKind::Bool)?;
+                let out = self.alloc_get(TypeKind::Bool)?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {
                         value: match val {
@@ -799,7 +839,7 @@ impl Compiler {
                 Some(out)
             }
             Literal::Float(f) => {
-                let out = self.register_manager.alloc_get(TypeKind::Float32)?;
+                let out = self.alloc_get(TypeKind::Float32)?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {
                         value: f as f64,
@@ -823,19 +863,26 @@ impl Compiler {
                 self.emit = true;
                 let ty = tempty?.ty;
                 let size = self.size_of(ty.clone(), loc.clone())?;
-                self.symbol_table.define_var(
+                self.define_var(
                     name.clone(),
                     TypeKind::Array(Box::new(ty.clone()), arr.len()),
                 );
-                let symbol = (*self.symbol_table.lookup_symbol(&name)?).clone();
+                let symbol = (*self.lookup_symbol(&name)?).clone();
                 for (i, expr) in arr.iter().enumerate() {
                     let reg = self.compile_expression(expr.clone(), loc)?;
                     if reg.ty == ty {
+                        let temp = self.alloc_get(TypeKind::Pointer(Box::new(ty.clone())))?;
+                        self.emit_instruction(Command::Add(
+                            Value::Location(Location::Symbol(symbol.id, i * size)),
+                            Value::ARP,
+                            temp.clone(),
+                        ));
                         self.emit_instruction(Command::Store(
                             Value::Register(reg.clone()),
-                            Value::Location(Location::Symbol(symbol.id, i * size)),
+                            Value::Register(temp.clone()),
                         ));
-                        self.register_manager.deallocate_register(reg.id);
+                        self.deallocate_register(reg.id);
+                        self.deallocate_register(temp.id);
                     } else {
                         self.emitError(
                             loc,
@@ -846,11 +893,13 @@ impl Compiler {
                         );
                     }
                 }
-                let out = self.register_manager.alloc_get(TypeKind::Pointer(Box::new(
-                    TypeKind::Array(Box::new(ty), arr.len()),
-                )))?;
-                self.emit_instruction(Command::Move(
+                let out = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Array(
+                    Box::new(ty),
+                    arr.len(),
+                ))))?;
+                self.emit_instruction(Command::Add(
                     Value::Location(Location::Symbol(symbol.id, 0)),
+                    Value::ARP,
                     out.clone(),
                 ));
                 Some(out)
@@ -864,38 +913,54 @@ impl Compiler {
                         .map(|c| c as char)
                         .collect::<String>()
                 );
-                self.symbol_table.define_var(
+                self.define_var(
                     name.clone(),
                     TypeKind::Array(Box::new(TypeKind::Char), str.len() + 1),
                 );
-                let symbol = (*self.symbol_table.lookup_symbol(&name)?).clone();
+                let symbol = (*self.lookup_symbol(&name)?).clone();
                 for (i, c) in str.chars().enumerate() {
+                    let temp = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Char)))?;
+                    self.emit_instruction(Command::Add(
+                        Value::ARP,
+                        Value::Location(Location::Symbol(symbol.id, i)),
+                        temp.clone(),
+                    ));
                     self.emit_instruction(Command::Store(
                         Value::Immediate(Immediate {
                             value: c as u8 as f64,
                             ty: TypeKind::Char,
                         }),
-                        Value::Location(Location::Symbol(symbol.id, i)),
+                        Value::Register(temp.clone()),
                     ));
+                    self.deallocate_register(temp.id);
                 }
+                let temp = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Char)))?;
+                self.emit_instruction(Command::Add(
+                    Value::ARP,
+                    Value::Location(Location::Symbol(symbol.id, str.len())),
+                    temp.clone(),
+                ));
                 self.emit_instruction(Command::Store(
                     Value::Immediate(Immediate {
                         value: 0.0,
                         ty: TypeKind::Char,
                     }),
-                    Value::Location(Location::Symbol(symbol.id, str.len())),
+                    Value::Register(temp.clone()),
                 ));
-                let out = self.register_manager.alloc_get(TypeKind::Pointer(Box::new(
-                    TypeKind::Array(Box::new(TypeKind::Char), str.len() + 1),
-                )))?;
-                self.emit_instruction(Command::Move(
+                self.deallocate_register(temp.id);
+                let out = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Array(
+                    Box::new(TypeKind::Char),
+                    str.len() + 1,
+                ))))?;
+                self.emit_instruction(Command::Add(
                     Value::Location(Location::Symbol(symbol.id, 0)),
+                    Value::ARP,
                     out.clone(),
                 ));
                 Some(out)
             }
             Literal::Struct(name, fields) => {
-                let ty = self.symbol_table.lookup_symbol(&name);
+                let ty = self.lookup_symbol(&name);
                 if let Some(ty) = ty {
                     if let Definition::User(UserType::Struct(def_fields)) = ty.body.clone() {
                         let sname = format!(
@@ -906,19 +971,25 @@ impl Compiler {
                                 .map(|c| c as char)
                                 .collect::<String>()
                         );
-                        self.symbol_table
-                            .define_var(sname.clone(), TypeKind::Struct(name.clone()));
-                        let symbol = (*self.symbol_table.lookup_symbol(&sname)?).clone();
+                        self.define_var(sname.clone(), TypeKind::Struct(name.clone()));
+                        let symbol = (*self.lookup_symbol(&sname)?).clone();
                         let mut offset = 0;
                         for field in def_fields.keys() {
                             if let Some(value) = fields.get(field) {
                                 let expr = self.compile_expression(value.clone(), loc)?;
                                 if expr.ty == def_fields[field] {
+                                    let temp = self.alloc_get(expr.ty.clone())?;
+                                    self.emit_instruction(Command::Add(
+                                        Value::Location(Location::Symbol(symbol.id, offset)),
+                                        Value::ARP,
+                                        temp.clone(),
+                                    ));
                                     self.emit_instruction(Command::Store(
                                         Value::Register(expr.clone()),
-                                        Value::Location(Location::Symbol(symbol.id, offset)),
+                                        Value::Register(temp.clone()),
                                     ));
-                                    self.register_manager.deallocate_register(expr.id);
+                                    self.deallocate_register(expr.id);
+                                    self.deallocate_register(temp.id);
                                     offset += self.size_of(expr.ty, loc)?;
                                 } else {
                                     self.emitError(
@@ -934,11 +1005,11 @@ impl Compiler {
                                 self.emitError(loc, &format!("Expected field {}", field));
                             }
                         }
-                        let out = self
-                            .register_manager
-                            .alloc_get(TypeKind::Pointer(Box::new(TypeKind::Struct(name))))?;
-                        self.emit_instruction(Command::Move(
+                        let out =
+                            self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Struct(name))))?;
+                        self.emit_instruction(Command::Add(
                             Value::Location(Location::Symbol(symbol.id, 0)),
+                            Value::ARP,
                             out.clone(),
                         ));
                         return Some(out);
@@ -952,7 +1023,7 @@ impl Compiler {
                 None
             }
             Literal::Union(name, variant, expr) => {
-                let type_def = self.symbol_table.lookup_symbol(&name);
+                let type_def = self.lookup_symbol(&name);
                 if let Some(type_def) = type_def {
                     if let Definition::User(UserType::Union(def)) = type_def.body.clone() {
                         let expr = self.compile_expression(*expr, loc)?;
@@ -966,27 +1037,39 @@ impl Compiler {
                                     .map(|c| c as char)
                                     .collect::<String>()
                             );
-                            self.symbol_table
-                                .define_var(sname.clone(), TypeKind::Union(name.clone()));
-                            let symbol =
-                                (*self.symbol_table.lookup_symbol(&sname).unwrap()).clone();
+                            self.define_var(sname.clone(), TypeKind::Union(name.clone()));
+                            let symbol = (*self.lookup_symbol(&sname).unwrap()).clone();
+                            let temp =
+                                self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Uint16)))?;
+                            self.emit_instruction(Command::Add(
+                                Value::Location(Location::Symbol(symbol.id, 0)),
+                                Value::ARP,
+                                temp.clone(),
+                            ));
                             self.emit_instruction(Command::Store(
                                 Value::Immediate(Immediate {
                                     value: def.keys().position(|x| *x == variant)? as f64,
                                     ty: TypeKind::Uint16,
                                 }),
-                                Value::Location(Location::Symbol(symbol.id, 0)),
+                                Value::Register(temp.clone()),
+                            ));
+                            self.emit_instruction(Command::Add(
+                                Value::Location(Location::Symbol(symbol.id, 1)),
+                                Value::ARP,
+                                temp.clone(),
                             ));
                             self.emit_instruction(Command::Store(
                                 Value::Register(expr.clone()),
-                                Value::Location(Location::Symbol(symbol.id, 1)),
+                                Value::Register(temp.clone()),
                             ));
-                            self.register_manager.deallocate_register(expr.id);
-                            let out = self.register_manager.alloc_get(TypeKind::Pointer(
-                                Box::new(TypeKind::Union(name.clone())),
-                            ))?;
-                            self.emit_instruction(Command::Move(
+                            self.deallocate_register(expr.id);
+                            self.deallocate_register(temp.id);
+                            let out = self.alloc_get(TypeKind::Pointer(Box::new(
+                                TypeKind::Union(name.clone()),
+                            )))?;
+                            self.emit_instruction(Command::Add(
                                 Value::Location(Location::Symbol(symbol.id, 0)),
+                                Value::ARP,
                                 out.clone(),
                             ));
                             return Some(out);
@@ -1003,7 +1086,7 @@ impl Compiler {
                 None
             }
             Literal::Enum(name, variant) => {
-                let def = self.symbol_table.lookup_symbol(&name);
+                let def = self.lookup_symbol(&name);
                 if let Some(def) = def {
                     if let Definition::User(UserType::Enum(variants)) = def.body.clone() {
                         let variant_def = variants.iter().position(|v| *v == variant);
@@ -1011,9 +1094,7 @@ impl Compiler {
                             self.emitError(loc, &format!("No such variant {}::{}", name, variant));
                             return None;
                         }
-                        let out = self
-                            .register_manager
-                            .alloc_get(TypeKind::Enum(name.clone()))?;
+                        let out = self.alloc_get(TypeKind::Enum(name.clone()))?;
                         self.emit_instruction(Command::Move(
                             Value::Immediate(Immediate {
                                 value: variant_def.unwrap() as f64,
@@ -1040,7 +1121,7 @@ impl Compiler {
         loc: SourceLocation,
         decl_ty: Option<TypeKind>,
     ) -> Option<Output> {
-        let reg = self.register_manager.alloc_get(TypeKind::Bool)?;
+        let reg = self.alloc_get(TypeKind::Bool)?;
         self.emit_instruction(Command::Move(
             Value::Immediate(Immediate {
                 value: 0.0,
@@ -1058,7 +1139,7 @@ impl Compiler {
         match pat {
             Pattern::Wildcard => {
                 self.emit_instruction(true_move);
-                self.register_manager.deallocate_register(val.id);
+                self.deallocate_register(val.id);
             }
             Pattern::Literal(lit) => {
                 let lit_value = self.compile_literal(lit, loc)?;
@@ -1068,17 +1149,15 @@ impl Compiler {
                     Value::Register(val.clone()),
                     reg.clone(),
                 ));
-                self.register_manager.deallocate_register(lit_value.id);
-                self.register_manager.deallocate_register(val.id);
+                self.deallocate_register(lit_value.id);
+                self.deallocate_register(val.id);
             }
             Pattern::Array(array) => {
                 if let TypeKind::Pointer(ptr) = val.ty.clone() {
                     if let TypeKind::Array(ty, count) = *ptr {
                         for (i, elem) in array.iter().enumerate() {
-                            let val_elm = self.register_manager.alloc_get(*ty.clone())?;
-                            let elm_ptr = self
-                                .register_manager
-                                .alloc_get(TypeKind::Pointer(ty.clone()))?;
+                            let val_elm = self.alloc_get(*ty.clone())?;
+                            let elm_ptr = self.alloc_get(TypeKind::Pointer(ty.clone()))?;
                             self.emit_instruction(Command::Add(
                                 Value::Register(val.clone()),
                                 Value::Immediate(Immediate {
@@ -1091,14 +1170,14 @@ impl Compiler {
                                 Value::Register(elm_ptr.clone()),
                                 val_elm.clone(),
                             ));
-                            self.register_manager.deallocate_register(elm_ptr.id);
+                            self.deallocate_register(elm_ptr.id);
                             let pat_val = self.compile_pattern(
                                 elem.clone(),
                                 val_elm.clone(),
                                 loc,
                                 Some(*ty.clone()),
                             )?;
-                            self.register_manager.deallocate_register(val_elm.id);
+                            self.deallocate_register(val_elm.id);
                             if i != 0 {
                                 self.emit_instruction(Command::And(
                                     Value::Register(reg.clone()),
@@ -1111,8 +1190,8 @@ impl Compiler {
                                     reg.clone(),
                                 ));
                             }
-                            self.register_manager.deallocate_register(pat_val.id);
-                            self.register_manager.deallocate_register(val.id);
+                            self.deallocate_register(pat_val.id);
+                            self.deallocate_register(val.id);
                         }
                     } else {
                         self.emitError(
@@ -1128,18 +1207,24 @@ impl Compiler {
                 }
             }
             Pattern::Identifier(ident) => {
-                self.symbol_table
-                    .define_var(ident.clone(), decl_ty.unwrap_or(val.ty.clone()));
-                let symbol = self.symbol_table.lookup_symbol(&ident)?;
+                self.define_var(ident.clone(), decl_ty.unwrap_or(val.ty.clone()));
+                let temp = self.alloc_get(TypeKind::Pointer(Box::new(val.ty.clone())))?;
+                let symbol = self.lookup_symbol(&ident)?.clone();
+                self.emit_instruction(Command::Add(
+                    Value::Location(Location::Symbol(symbol.id, 0)),
+                    Value::ARP,
+                    temp.clone(),
+                ));
                 self.emit_instruction(Command::Store(
                     Value::Register(val.clone()),
-                    Value::Location(Location::Symbol(symbol.id, 0)),
+                    Value::Register(temp.clone()),
                 ));
+                self.deallocate_register(temp.id);
                 self.emit_instruction(true_move);
-                self.register_manager.deallocate_register(val.id);
+                self.deallocate_register(val.id);
             }
             Pattern::Enum(name, variant) => {
-                let ty = self.symbol_table.lookup_symbol(&name)?;
+                let ty = self.lookup_symbol(&name)?;
                 if let Definition::User(UserType::Enum(variants)) = ty.body.clone() {
                     let index = variants.iter().position(|v| *v == variant);
                     if let Some(index) = index {
@@ -1151,7 +1236,7 @@ impl Compiler {
                             }),
                             reg.clone(),
                         ));
-                        self.register_manager.deallocate_register(val.id);
+                        self.deallocate_register(val.id);
                     } else {
                         self.emitError(loc, &format!("No such variant {}::{}", name, variant));
                     }
@@ -1160,7 +1245,7 @@ impl Compiler {
                 }
             }
             Pattern::Union(name, variant, child_pattern) => {
-                let tdef = self.symbol_table.lookup_symbol(&name)?.body.clone();
+                let tdef = self.lookup_symbol(&name)?.body.clone();
                 let index = match tdef.clone() {
                     Definition::User(UserType::Union(variants)) => variants
                         .iter()
@@ -1191,7 +1276,7 @@ impl Compiler {
                 };
                 if let TypeKind::Pointer(ptr) = val.ty.clone() {
                     if let TypeKind::Union(_) = *ptr {
-                        let tag = self.register_manager.alloc_get(TypeKind::Uint16)?;
+                        let tag = self.alloc_get(TypeKind::Uint16)?;
                         self.emit_instruction(Command::Load(
                             Value::Register(val.clone()),
                             tag.clone(),
@@ -1204,15 +1289,15 @@ impl Compiler {
                             }),
                             reg.clone(),
                         ));
-                        self.register_manager.deallocate_register(tag.id);
+                        self.deallocate_register(tag.id);
                         self.emit_instruction(Command::JumpFalse(
                             Location::None,
                             Value::Register(reg.clone()),
                         ));
                         let jid = self.get_last_jump_id();
                         self.new_block();
-                        let union_data = self.register_manager.alloc_get(variant_ty.clone())?;
-                        let temp = self.register_manager.alloc_get(TypeKind::Int32)?;
+                        let union_data = self.alloc_get(variant_ty.clone())?;
+                        let temp = self.alloc_get(TypeKind::Int32)?;
                         self.emit_instruction(Command::Add(
                             Value::Register(val),
                             Value::Immediate(Immediate {
@@ -1225,7 +1310,7 @@ impl Compiler {
                             Value::Register(temp.clone()),
                             union_data.clone(),
                         ));
-                        self.register_manager.deallocate_register(temp.id);
+                        self.deallocate_register(temp.id);
                         let result = self.compile_pattern(
                             *child_pattern,
                             union_data.clone(),
@@ -1236,8 +1321,8 @@ impl Compiler {
                             Value::Register(result.clone()),
                             reg.clone(),
                         ));
-                        self.register_manager.deallocate_register(result.id);
-                        self.register_manager.deallocate_register(union_data.id);
+                        self.deallocate_register(result.id);
+                        self.deallocate_register(union_data.id);
                         let nb = self.new_block();
                         self.update_jump(
                             jid,
@@ -1251,13 +1336,12 @@ impl Compiler {
                 }
             }
             Pattern::Struct(name, fields) => {
-                let dsym = (Symbol {
+                let dsym = Symbol {
                     name: "".to_string(),
                     body: Definition::Var(TypeKind::Void),
                     id: 0,
-                });
+                };
                 let type_def = if let Definition::User(UserType::Struct(map)) = self
-                    .symbol_table
                     .lookup_symbol(&name)
                     .unwrap_or_else(|| {
                         self.emitError(loc, &format!("Undefined struct type '{}'", name));
@@ -1287,9 +1371,8 @@ impl Compiler {
                             acc
                         }
                     });
-                    let field_loc = self
-                        .register_manager
-                        .alloc_get(TypeKind::Pointer(Box::new(type_def[field].clone())))?;
+                    let field_loc =
+                        self.alloc_get(TypeKind::Pointer(Box::new(type_def[field].clone())))?;
                     self.emit_instruction(Command::Add(
                         Value::Register(val.clone()),
                         Value::Immediate(Immediate {
@@ -1298,12 +1381,12 @@ impl Compiler {
                         }),
                         field_loc.clone(),
                     ));
-                    let field_reg = self.register_manager.alloc_get(type_def[field].clone())?;
+                    let field_reg = self.alloc_get(type_def[field].clone())?;
                     self.emit_instruction(Command::Load(
                         Value::Register(field_loc.clone()),
                         field_reg.clone(),
                     ));
-                    self.register_manager.deallocate_register(field_loc.id);
+                    self.deallocate_register(field_loc.id);
                     let pattern_matches = self.compile_pattern(
                         pat.clone(),
                         field_reg,
@@ -1328,15 +1411,22 @@ impl Compiler {
         return Some(reg);
     }
     fn compile_declaration(&mut self, decl: Declaration, loc: SourceLocation) -> Option<Output> {
-        self.symbol_table.define_var(decl.name.clone(), decl.ty);
+        self.define_var(decl.name.clone(), decl.ty);
         if decl.value.is_some() {
             let value = self.compile_expression(decl.value.unwrap(), loc)?;
-            let symbol = self.symbol_table.lookup_symbol(&decl.name)?;
+            let symbol = self.lookup_symbol(&decl.name)?.id;
+            let temp = self.alloc_get(TypeKind::Pointer(Box::new(value.ty.clone())))?;
+            self.emit_instruction(Command::Add(
+                Value::Location(Location::Symbol(symbol, 0)),
+                Value::ARP,
+                temp.clone(),
+            ));
             self.emit_instruction(Command::Store(
                 Value::Register(value.clone()),
-                Value::Location(Location::Symbol(symbol.id, 0)),
+                Value::Register(temp.clone()),
             ));
-            self.register_manager.deallocate_register(value.id);
+            self.deallocate_register(value.id);
+            self.deallocate_register(temp.id);
         }
         None
     }
@@ -1345,7 +1435,7 @@ impl Compiler {
             let output = self.compile_expression(expr, loc)?;
             let value = self.convert_output_to_value(output.clone());
             self.emit_instruction(Command::Ret(Some(value)));
-            self.register_manager.deallocate_register(output.id);
+            self.deallocate_register(output.id);
         } else {
             self.emit_instruction(Command::Ret(None));
         }
@@ -1355,7 +1445,7 @@ impl Compiler {
         let condition = self.compile_expression(stmt.condition, loc.clone())?;
         let o_val = self.convert_output_to_value(condition.clone());
         self.emit_instruction(Command::JumpFalse(Location::None, o_val.clone()));
-        self.register_manager.deallocate_register(condition.id);
+        self.deallocate_register(condition.id);
         let jump_id = self.get_last_jump_id();
         self.compile_statement(*stmt.then_block);
         let current_block = self.current_block();
@@ -1398,6 +1488,7 @@ impl Compiler {
                         }],
                     ]
                     .concat(),
+                    None,
                 ),
                 loc: stmt.body.loc,
             }),
@@ -1421,7 +1512,7 @@ impl Compiler {
             Location::None,
             Value::Register(condition.clone()),
         ));
-        self.register_manager.deallocate_register(condition.id);
+        self.deallocate_register(condition.id);
         let body_jump = self.get_last_jump_id();
         self.compile_statement(*stmt.body);
         self.emit_instruction(Command::Jump(Location::Block(condition_block)));
@@ -1484,7 +1575,7 @@ impl Compiler {
         stmt: Statement,
         loc: SourceLocation,
     ) -> Option<Vec<Statement>> {
-        if let StatementKind::Block(block) = stmt.kind {
+        if let StatementKind::Block(block, _) = stmt.kind {
             Some(block)
         } else {
             self.emitError(loc, "Expected block statement");
@@ -1584,7 +1675,7 @@ impl Compiler {
         }
         None
     }
-    fn size_of(&self, ty: TypeKind, loc: SourceLocation) -> Option<usize> {
+    pub fn size_of(&self, ty: TypeKind, loc: SourceLocation) -> Option<usize> {
         match ty {
             TypeKind::Int16 => Some(1),
             TypeKind::Uint16 => Some(1),
@@ -1596,7 +1687,7 @@ impl Compiler {
             TypeKind::Pointer(_) => Some(2),
             TypeKind::Array(aty, size) => Some(size * self.size_of(*aty, loc)?),
             TypeKind::Struct(name) => {
-                let struct_def = self.symbol_table.lookup_symbol(&name)?;
+                let struct_def = self.lookup_symbol(&name)?;
                 if let Definition::User(UserType::Struct(fields)) = &struct_def.body {
                     fields
                         .iter()
@@ -1611,7 +1702,7 @@ impl Compiler {
             TypeKind::Void => Some(0),
             TypeKind::Enum(_) => Some(1),
             TypeKind::Union(name) => {
-                let union_def = self.symbol_table.lookup_symbol(&name)?;
+                let union_def = self.lookup_symbol(&name)?;
                 if let Definition::User(UserType::Union(fields)) = &union_def.body {
                     Some(
                         (fields

@@ -43,349 +43,6 @@ fn alloc(size: i32) -> ptr {
     }
     return ptr + 7;
 }
-fn alloc_asm(){
-    define_symbol (ptr: i32);
-    define_symbol (next: i32);
-    define_arg(size: i32);
-    loop:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;//loads ptr val to EX1
-    AddEx EX1 1; //ptr+1==0
-    Jz EX1 end;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //loads ptr val to EX1
-    LoadEX EX1 EX1;//loads ptr+0(block size) to EX1
-    PushEx EX1;
-    AddEx size ARP;
-    LoadEx EX1 EX2; //loads requested size into EX2
-    PopEx EX1; //reloads block size to ex1
-    Greater EX2 EX1;
-    Mov R1 R2;
-    Sub EX1 EX2;
-    Or R1 R2; //csize>=size?
-    AddEx ptr ARP;
-    AddEx EX1 2;
-    LoadEx EX1 EX1; //loads ptr+2 to EX1
-    And EX1 R1; //csize>=size && is_free?
-    Jz R1 block_alloc_condition:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //loads ptr val to EX1
-    LoadEX EX1 EX1;//loads ptr+0(block size) to EX1
-    PushEx EX1;
-    AddEx size ARP;
-    LoadEx EX1 EX1; //loads requested size to EX1
-    AddEx EX1 7;
-    PopEx EX2; //reloads block size to ex2
-    Greater EX2 EX1; //csize>size+7?
-    Jz R1 mark_free;
-    //split block
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    LoadEx EX1 EX1; //EX1= ptr.next
-    PushEx EX1;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 7; //ptr+7
-    Mov EX1 EX2;
-    AddEx size ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 EX2; //ptr+7+size
-    StoreEx next EX1; //set symbol next to ptr+7+size
-    PushEx EX1;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    LoadEx EX1 EX2; //current block size
-    AddEx size ARP;
-    LoadEx EX1 EX1;//size
-    SubEx EX2 EX1;
-    SubEx EX1 7; //csize-size-7
-    PopEx EX2;
-    StoreEx EX2 EX1; //set next.size = csize-size-7 or total size-(requested size+headers)
-    AddEx EX2 2;
-    StoreEx EX1 1; //set next.is_free = true
-    Mov EX1 EX2;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    LoadEx EX1 EX1; //get next.next val
-    PushEx EX1;
-    AddEx EX2 1;
-    PopEx EX2;
-    StoreEx EX1 EX2; //set next.next to ptr.next
-    AddEx EX1 2; //next+5
-    Mov EX1 EX2;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //load ptr
-    StoreEx EX2 EX1; //set next.prev to ptr
-    AddEx EX1 3;//ptr.next
-    PushEx EX1;
-    SubEx EX2 5;//EX1=Next
-    PopEx EX2;
-    StoreEx EX2 EX1; //ptr.next=next
-    SubEx EX2 3;//EX1=ptr
-    Mov EX1 EX2;
-    AddEx size ARP;
-    LoadEx EX1 EX1;//load size
-    StoreEx EX2 EX1; //ptr.size = size
-    PopEx EX1;//EX1=original ptr.next
-    PushEx EX1;
-    AddEx EX1 1;
-    Jz EX1 cleanup_split;
-    PopEx EX1;
-    AddEx EX1 5;//old next block's prev
-    Mov EX1 EX2;
-    AddEx next ARP;
-    LoadEx EX1 EX1;//load old next
-    StoreEx EX1 EX2; //old next.prev = next
-    Jmp mark_free;
-    cleanup_split:
-    PopEx EX1;
-    mark_free:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;//load ptr
-    AddEx 2 EX1; //ptr+2(is_free)
-    Store EX1 false;
-    Jmp end;
-    block_alloc_condition:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx 3 EX1; //ptr+3(next ptr)
-    LoadEx EX1 EX1; //loads next ptr to EX1
-    AddEx EX1 1;
-    Jnz EX1 continue_search;
-    //alloc new block
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //load ptr
-    AddEx 7 EX1; //add header len
-    PushEx EX1;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    LoadEx EX1 EX1; //ptr+0, block size
-    PopEx EX2; //ptr+7
-    AddEx EX2 EX1; //ptr+7+block size
-    Mov EX1 EX2;
-    AddEx size ARP;
-    LoadEx EX1 EX1;
-    StoreEx EX2 EX1; //write new block size
-    AddEx EX2 2; //next+2
-    Store EX1 0; //write false to next+2
-    AddEx EX1 1;//next+3
-    StoreEx EX1 -1; //write null to next+3
-    AddEx EX1 2; //next+5
-    PushEx EX1;
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //loads ptr val to EX1
-    PopEx EX2; //next+5
-    StoreEx EX2 EX1; //set new block prev to this block
-    AddEx EX1 3; //ptr+3(next ptr)
-    PushEx EX1;
-    SubEx EX2 5; //EX1=next
-    PopEx EX2;
-    StoreEx EX2 EX1; //set ptr+next to new block;
-    PushEx EX1;
-    AddEx ptr ARP;
-    PopEx EX2;
-    StoreEx EX1 EX2; //set ptr to next
-    Jmp end; //return ptr+7
-    continue_search:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx 3 EX1; //ptr+3(next ptr)
-    LoadEx EX1 EX2; //loads next ptr to EX2
-    AddEx ptr ARP;
-    StoreEx EX1 EX2; //update ptr to next ptr
-    Jmp loop;
-    end:
-    AddEx ptr ARP;
-    LoadEx EX1 EX1; //loads ptr val to EX1
-    AddEx EX1 7; //return ptr+7
-    PushEx EX1;
-    Return;
-}
-fn free_asm() {
-    define_arg(user_ptr: i32);
-    define_symbol(ptr: i32);
-    define_symbol(prev: i32);
-    define_symbol(next: i32);
-    define_symbol(nlen: i32);
-
-    // ptr = user_ptr - 7
-    AddEx user_ptr ARP;
-    LoadEx EX1 EX1;
-    SubEx EX1 7;
-    PushEx EX1;
-    AddEx ptr ARP;
-    PopEx EX2;
-    StoreEx EX1 EX2;
-
-    // mark free
-    AddEx EX2 2;
-    Store EX2 1;
-
-    // cache prev
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 5;
-    LoadEx EX1 EX2;
-    AddEx prev ARP;
-    StoreEx EX1 EX2;
-
-    // cache next
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    LoadEx EX1 EX2;
-    AddEx next ARP;
-    StoreEx EX1 EX2;
-
-    // check merge left: prev != -1 && prev.free
-    AddEx prev ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 1;
-    JumpZero R1 check_merge_right;
-
-    SubEx EX1 1;
-    AddEx EX1 2;
-    Load EX1 R1;
-    JumpZero R1 check_merge_right;
-
-    // perform left merge logic
-    // nlen = prev + ptr + 7
-    AddEx prev ARP;
-    LoadEx EX1 EX1;
-    LoadEx EX1 EX1;
-    AddEx ptr ARP;
-    LoadEx EX2 EX2;
-    LoadEx EX2 EX2;
-    AddEx EX1 EX2;
-    AddEx EX1 7;
-    PushEx EX1;
-    AddEx nlen ARP;
-    PopEx EX2;
-    StoreEx EX1 EX2;
-
-    // check 3-way: next != -1 && next.free
-    AddEx next ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 1;
-    JumpZero R1 commit_merge_left;
-
-    SubEx EX1 1;
-    AddEx EX1 2;
-    Load EX1 R1;
-    JumpZero R1 commit_merge_left;
-
-    // absorb next into nlen
-    AddEx next ARP;
-    LoadEx EX1 EX1;
-    LoadEx EX1 EX1;
-    AddEx EX1 7;
-    AddEx nlen ARP;
-    LoadEx EX2 EX2;
-    AddEx EX1 EX2;
-
-    // update local nlen
-    PushEx EX1;
-    AddEx nlen ARP;
-    PopEx EX2;
-    StoreEx EX1 EX2;
-
-    // advance next to skip middle (next = next->next)
-    AddEx next ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    LoadEx EX1 EX1;
-
-    // safe store: prevent register clobbering
-    PushEx EX1;
-    AddEx next ARP;
-    PopEx EX2;
-    StoreEx EX1 EX2;
-
-    commit_merge_left:
-    // prev.size = nlen
-    AddEx prev ARP;
-    LoadEx EX1 EX1;
-    AddEx nlen ARP;
-    LoadEx EX2 EX2;
-    StoreEx EX1 EX2;
-
-    // prev.next = next
-    AddEx prev ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    AddEx next ARP;
-    LoadEx EX2 EX2;
-    StoreEx EX1 EX2;
-
-    // if next != -1, next.prev = prev
-    AddEx EX2 1;
-    JumpZero R1 end;
-
-    SubEx EX2 1;
-    AddEx EX2 5;
-    PushEx EX2;
-    AddEx prev ARP;
-    LoadEx EX1 EX2;
-    PopEx EX1;
-    StoreEx EX1 EX2;
-
-    Jump end;
-
-    check_merge_right:
-    // check next valid/free
-    AddEx next ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 1;
-    JumpZero R1 end;
-
-    SubEx EX1 1;
-    AddEx EX1 2;
-    Load EX1 R1;
-    JumpZero R1 end;
-
-    // nlen = ptr + next + 7
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    LoadEx EX1 EX1;
-    AddEx next ARP;
-    LoadEx EX2 EX2;
-    LoadEx EX2 EX2;
-    AddEx EX1 EX2;
-    AddEx EX1 7;
-    PushEx EX1;
-
-    // ptr.size = nlen
-    AddEx ptr ARP;
-    LoadEx EX1 EX1;
-    PopEx EX2;
-    StoreEx EX1 EX2;
-
-    // ptr.next = next->next (far_next)
-    AddEx next ARP;
-    LoadEx EX1 EX1;
-    AddEx EX1 3;
-    LoadEx EX1 EX1;
-
-    AddEx ptr ARP;
-    LoadEx EX2 EX2;
-    AddEx EX2 3;
-    StoreEx EX2 EX1;
-
-    // if far_next != -1, far_next.prev = ptr
-    AddEx EX1 1;
-    JumpZero R1 end;
-
-    SubEx EX1 1;
-    AddEx EX1 5;
-    AddEx ptr ARP;
-    LoadEx EX2 EX2;
-    StoreEx EX1 EX2;
-
-    end:
-    Return;
-}
 fn free(ptr: ptr) {
     let ptr = ptr - 7;
     write(ptr + 2, true); //mark free
@@ -415,3 +72,32 @@ fn free(ptr: ptr) {
         }
     }
 }
+Register allocation
+Given the live ranges at some point:
+add v1,v2;live: v1 v2
+add v1,v3;live: v3, v1
+Build a graph that connects all registers that are live at the same time
+     ---v1---
+   \/        \/
+   v2        v3
+v1 -->r1
+v2 & v3 -->r2
+nodes(virt registers) with no connection can share the same register, nodes with a connection can't.
+we can do this by type now
+Code			Usage
+----			-----
+let a:int16=0; 		V1
+let b:int32=1;		V1 V2
+let d:int32=a+b;	V1 V2 -> V3
+let c: int8=5;		Va1(upper 8 bits of V1) V3
+let e: int32=d+c	Va1 V3->V4
+return e		V4
+
+Graph
+-----
+V1-V2		r1:V1 r2:V2
+V3-Va1	--->	r2:V3 ra1:Va1
+  V4		r2:V4
+Once we have the graph, we can just color it using Recursive Largest First graph-coloring, then map the colors to registers.
+If theirs too many colors, then we spill and try to color again.
+Continue until we satisfy the constraints.

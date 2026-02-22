@@ -2,7 +2,7 @@ use crate::devices::audio::load_wav;
 use crate::devices::disk::{Disk, DiskSection, DiskSectionType};
 use crate::executable::{Bytecode, Data, Executable, Fn, Library};
 use crate::util::{
-    convert_float, convert_u32_to_i16, flatten_vec, gen_3d_matrix, gen_rotation_matrix,
+    convert_float, convert_u32_to_i16, flatten_vec, gen_3d_matrix,
 };
 use crate::vm::CommandType::*;
 use crate::vm::CommandType::{Load, Mov, NOP};

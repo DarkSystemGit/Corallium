@@ -62,7 +62,8 @@ return *bobref;
         "#;
     let mut compiler = Backend::new(src, "test.micro");
     compiler.select_instructions();
-    println!("{:?}", compiler.functions);
+    compiler.display_ir();
+    //println!("{:#?}", compiler.functions);
 
     //println!("{:?}", lexer.lex());
 }

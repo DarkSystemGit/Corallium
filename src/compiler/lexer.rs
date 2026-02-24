@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter, Result};
 
 pub struct Lexer {
     input: InputStream,
@@ -506,4 +507,33 @@ pub enum TypeKind {
     Union(String),
     Enum(String),
     Function(Vec<TypeKind>, Box<TypeKind>),
+}
+impl Display for TypeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        match self {
+            TypeKind::Int16 => write!(f, "int16"),
+            TypeKind::Int32 => write!(f, "int32"),
+            TypeKind::Float32 => write!(f, "float32"),
+            TypeKind::Char => write!(f, "char"),
+            TypeKind::Uint16 => write!(f, "uint16"),
+            TypeKind::Uint32 => write!(f, "uint32"),
+            TypeKind::Void => write!(f, "void"),
+            TypeKind::Bool => write!(f, "bool"),
+            TypeKind::Pointer(ty) => write!(f, "*{}", ty),
+            TypeKind::Array(ty, size) => write!(f, "[{}; {}]", ty, size),
+            TypeKind::Struct(name) => write!(f, "struct {}", name),
+            TypeKind::Union(name) => write!(f, "union {}", name),
+            TypeKind::Enum(name) => write!(f, "enum {}", name),
+            TypeKind::Function(params, ret) => write!(
+                f,
+                "fn({}) -> {}",
+                params
+                    .iter()
+                    .map(|x| format!("{}", x))
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                ret
+            ),
+        }
+    }
 }

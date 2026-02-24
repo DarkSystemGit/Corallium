@@ -36,6 +36,122 @@ fn exec_bytecode(machine: &mut Machine) {
                 println!("Mul {} {} -> {}", args[0], args[1], machine.core.r1);
             }
         }
+        CommandType::Div => {
+            //div(i16,i16) -> r1
+            let args = take_bytes(machine, 2);
+            machine.core.r1 = (args[0] / args[1]) as i16;
+            if machine.debug {
+                println!("Div {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::AddU => {
+            //addu(u16,u16)->r1
+            let args: Vec<u16> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i16) as u16)
+                .collect();
+            machine.core.r1 = (args[0] + args[1]) as i16;
+            if machine.debug {
+                println!("AddUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::SubU => {
+            //subu(u16,u16)->r1
+            let args: Vec<u16> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i16) as u16)
+                .collect();
+            machine.core.r1 = (args[0] - args[1]) as i16;
+            if machine.debug {
+                println!("SubUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::MulU => {
+            //mulu(u16,u16)->r1
+            let args: Vec<u16> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i16) as u16)
+                .collect();
+            machine.core.r1 = (args[0] * args[1]) as i16;
+            if machine.debug {
+                println!("MulUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::DivU => {
+            //divu(u16,u16)->r1
+            let args: Vec<u16> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i16) as u16)
+                .collect();
+            machine.core.r1 = (args[0] / args[1]) as i16;
+            if machine.debug {
+                println!("DivUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::AddExU => {
+            //addExu(u32,u32) -> ex1
+            let args: Vec<u32> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i32) as u32)
+                .collect();
+            set_reg(10, &mut machine.core, (args[0] + args[1]) as f64);
+            if machine.debug {
+                println!(
+                    "AddExUnsigned {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::SubExU => {
+            //subExu(u32,u32) -> ex1
+            let args: Vec<u32> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i32) as u32)
+                .collect();
+            set_reg(10, &mut machine.core, (args[0] - args[1]) as f64);
+            if machine.debug {
+                println!(
+                    "SubExUnsigned {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::MulExU => {
+            //mulExu(u32,u32) -> ex1
+            let args: Vec<u32> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i32) as u32)
+                .collect();
+            set_reg(10, &mut machine.core, (args[0] * args[1]) as f64);
+            if machine.debug {
+                println!(
+                    "MulExUnsigned {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::DivExU => {
+            //divExu(u32,u32) -> ex1
+            let args: Vec<u32> = take_bytes(machine, 2)
+                .iter()
+                .map(|x| (*x as i32) as u32)
+                .collect();
+            set_reg(10, &mut machine.core, (args[0] / args[1]) as f64);
+            if machine.debug {
+                println!(
+                    "DivExUnsigned {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
         CommandType::AddEx => {
             //addEx(i32,i32) -> ex1
             let args = take_bytes(machine, 2);
@@ -88,14 +204,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 );
             }
         }
-        CommandType::Div => {
-            //div(i16,i16) -> r1
-            let args = take_bytes(machine, 2);
-            machine.core.r1 = (args[0] / args[1]) as i16;
-            if machine.debug {
-                println!("Div {} {} -> {}", args[0], args[1], machine.core.r1);
-            }
-        }
+
         CommandType::Greater => {
             //greater(f64,f64) -> r1
             let args = take_bytes(machine, 2);
@@ -191,6 +300,56 @@ fn exec_bytecode(machine: &mut Machine) {
             machine.core.r1 = !(args[0] as i16);
             if machine.debug {
                 println!("Not {} -> {}", args[0], machine.core.r1);
+            }
+        }
+        CommandType::Shl => {
+            //shl(i16,i16) -> r1
+            let args = take_bytes(machine, 2);
+            machine.core.r1 = (args[0] as i16) << (args[1] as i16);
+            if machine.debug {
+                println!("Shl {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::Shr => {
+            //shr(i16,i16) -> r1
+            let args = take_bytes(machine, 2);
+            machine.core.r1 = (args[0] as i16) >> (args[1] as i16);
+            if machine.debug {
+                println!("Shr {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::ShlEx => {
+            //shlex(i16,i16) -> ex1
+            let args = take_bytes(machine, 2);
+            set_reg(
+                10,
+                &mut machine.core,
+                ((args[0] as i32) << (args[1] as i32)) as f64,
+            );
+            if machine.debug {
+                println!(
+                    "ShlEx {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::ShrEx => {
+            //shrex(i16,i16) -> ex1
+            let args = take_bytes(machine, 2);
+            set_reg(
+                10,
+                &mut machine.core,
+                ((args[0] as i32) >> (args[1] as i32)) as f64,
+            );
+            if machine.debug {
+                println!(
+                    "ShrEx {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
             }
         }
         CommandType::Xor => {
@@ -1005,10 +1164,22 @@ pub enum CommandType {
     SubEx,
     MulEx,
     DivEx,
+    AddU,
+    SubU,
+    MulU,
+    DivU,
+    AddExU,
+    SubExU,
+    MulExU,
+    DivExU,
     And,
     Not,
     Or,
     Xor,
+    AndEx,
+    OrEx,
+    NotEx,
+    XorEx,
     Push,
     Pushf,
     PushEx,
@@ -1043,4 +1214,9 @@ pub enum CommandType {
     Loadf,
     Call,
     Return,
+    Equals,
+    Shl,
+    Shr,
+    ShlEx,
+    ShrEx,
 }

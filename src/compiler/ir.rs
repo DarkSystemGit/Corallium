@@ -246,7 +246,7 @@ impl IrGen {
     }
 
     fn compile_statement(&mut self, statement: Statement) {
-        //println!("Compiling statement: {:?}", statement.kind);
+        //println!("Compiling statement: {}", statement.kind);
         match statement.kind {
             StatementKind::Expression(expr) => {
                 self.compile_expression(expr, statement.loc);
@@ -406,7 +406,10 @@ impl IrGen {
                         } else {
                             self.emitError(
                                 loc,
-                                &format!("Cannot access property of non-struct type, {:?} is not a struct", *ptr),
+                                &format!(
+                                    "Cannot access property of non-struct type, {} is not a struct",
+                                    *ptr
+                                ),
                             );
                         }
                     } else {
@@ -420,7 +423,7 @@ impl IrGen {
                         self.emitError(
                             loc,
                             &format!(
-                                "Type mismatch, type {:?} and {:?} aren't equivalent",
+                                "Type mismatch, type {} and {} aren't equivalent",
                                 outL.ty, outR.ty
                             ),
                         );
@@ -615,7 +618,7 @@ impl IrGen {
                             self.emitError(
                                 loc,
                                 &format!(
-                                    "function call argument type mismatch: expected {:?}, got {:?}",
+                                    "function call argument type mismatch: expected {}, got {}",
                                     param, arg
                                 ),
                             );
@@ -782,7 +785,14 @@ impl IrGen {
                                     ret = self.alloc_get(val.ty.clone());
                                 }
                                 if val.ty != ret.clone().unwrap().ty {
-                                    self.emitError(loc, &format!("Type mismatch, expected block to return {:?}, got {:?}",ret.clone().unwrap().ty,val.ty));
+                                    self.emitError(
+                                        loc,
+                                        &format!(
+                                            "Type mismatch, expected block to return {}, got {}",
+                                            ret.clone().unwrap().ty,
+                                            val.ty
+                                        ),
+                                    );
                                 }
                                 self.emit_instruction(Command::Move(
                                     Value::Register(val),
@@ -886,10 +896,7 @@ impl IrGen {
                     } else {
                         self.emitError(
                             loc,
-                            &format!(
-                                "Invalid type, expected type: {:?}, got type: {:?}",
-                                ty, reg.ty
-                            ),
+                            &format!("Invalid type, expected type: {}, got type: {}", ty, reg.ty),
                         );
                     }
                 }
@@ -995,7 +1002,7 @@ impl IrGen {
                                     self.emitError(
                                         loc,
                                         &format!(
-                                            "Type mismatch for field {}, expected {:?}, got {:?}",
+                                            "Type mismatch for field {}, expected {}, got {}",
                                             field, def_fields[field], expr.ty
                                         ),
                                     );
@@ -1196,13 +1203,13 @@ impl IrGen {
                     } else {
                         self.emitError(
                             loc,
-                            &format!("Expected match value to be an array, got {:?}", val.ty),
+                            &format!("Expected match value to be an array, got {}", val.ty),
                         );
                     }
                 } else {
                     self.emitError(
                         loc,
-                        &format!("Expected match value to be an array, got {:?}", val.ty),
+                        &format!("Expected match value to be an array, got {}", val.ty),
                     );
                 }
             }
@@ -1329,10 +1336,10 @@ impl IrGen {
                             Command::JumpFalse(Location::Block(nb), Value::Register(reg.clone())),
                         );
                     } else {
-                        self.emitError(loc, &format!("Expected union, got {:?}", val.ty));
+                        self.emitError(loc, &format!("Expected union, got {}", val.ty));
                     }
                 } else {
-                    self.emitError(loc, &format!("Expected union, got {:?}", val.ty));
+                    self.emitError(loc, &format!("Expected union, got {}", val.ty));
                 }
             }
             Pattern::Struct(name, fields) => {
@@ -1669,9 +1676,9 @@ impl IrGen {
         match ty {
             TypeKind::Pointer(ptr) => match *ptr {
                 TypeKind::Function(params, ret) => return Some((params, *ret)),
-                _ => self.emitError(loc, &format!("Expected function type, got {:?}", ptr)),
+                _ => self.emitError(loc, &format!("Expected function type, got {}", ptr)),
             },
-            _ => self.emitError(loc, &format!("Expected function type, got {:?}", ty)),
+            _ => self.emitError(loc, &format!("Expected function type, got {}", ty)),
         }
         None
     }

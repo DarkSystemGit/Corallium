@@ -155,6 +155,10 @@ pub fn convert_int_to_command(i: i16) -> CommandType {
         57 => CommandType::SubExU,
         58 => CommandType::MulExU,
         59 => CommandType::DivExU,
+        60 => CommandType::AndEx,
+        61 => CommandType::OrEx,
+        62 => CommandType::NotEx,
+        63 => CommandType::XorEx,
         _ => CommandType::NOP,
     }
 }
@@ -211,6 +215,10 @@ pub fn pack_command(c: CommandType) -> i16 {
         CommandType::SubExU => 57,
         CommandType::MulExU => 58,
         CommandType::DivExU => 59,
+        CommandType::AndEx => 60,
+        CommandType::OrEx => 61,
+        CommandType::NotEx => 62,
+        CommandType::XorEx => 63,
         _ => 0,
     }
 }

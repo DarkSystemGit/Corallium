@@ -491,7 +491,7 @@ pub enum OperatorKind {
     Dot,
     Sizeof,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum TypeKind {
     Int16,
     Int32,

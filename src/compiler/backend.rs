@@ -2,7 +2,8 @@ use super::ir::{self, Command, Definition, Immediate, IrGen, Output, Value};
 use super::lexer::TypeKind;
 use crate::executable::{self, Bytecode, Executable, Fn};
 use crate::vm::CommandType as CmdType;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PhysReg {
     // 16-bit General Purpose
@@ -50,9 +51,10 @@ pub enum OpCode {
     Jump,
     JumpNotZero,
     JumpZero,
-    GreaterThan(CommandType),
-    LessThan(CommandType),
-    Eq(CommandType),
+    GreaterThan,
+    LessThan,
+    Eq,
+    Exit,
 }
 
 #[derive(Debug)]
@@ -98,8 +100,8 @@ pub enum CommandType {
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
-    pub params: Vec<(String, TypeKind)>,
-    pub symbols: Vec<(String, TypeKind)>,
+    pub params: Vec<(String, TypeKind, usize)>,
+    pub symbols: Vec<(String, TypeKind, usize)>,
     pub blocks: Vec<Vec<Inst>>,
 
     virt_locs: BTreeMap<usize, RegLoc>,
@@ -111,8 +113,8 @@ pub struct Function {
 impl Function {
     fn new(
         name: String,
-        params: Vec<(String, TypeKind)>,
-        symbols: Vec<(String, TypeKind)>,
+        params: Vec<(String, TypeKind, usize)>,
+        symbols: Vec<(String, TypeKind, usize)>,
     ) -> Self {
         Self {
             name,
@@ -129,10 +131,17 @@ impl Function {
 
 #[derive(Debug)]
 pub struct Backend {
-    input: IrGen,
+    pub input: IrGen,
     pub functions: Vec<Function>,
+    pub logs: Vec<String>,
     loc: (usize, usize),
     registers: Vec<ir::Register>,
+    current_block_usage: HashMap<usize, usize>,
+    current_var_scopes: HashMap<usize, HashSet<usize>>,
+
+    // LRU Tracking
+    register_lru: HashMap<PhysReg, usize>,
+    time_step: usize,
 }
 
 impl Backend {
@@ -145,37 +154,62 @@ impl Backend {
         Backend {
             input: ir_gen,
             functions: Vec::new(),
+            logs: Vec::new(),
             loc: (0, 0),
             registers,
+            current_block_usage: HashMap::new(),
+            current_var_scopes: HashMap::new(),
+            register_lru: HashMap::new(),
+            time_step: 0,
         }
     }
 
     pub fn select_instructions(&mut self) {
         let input_funcs = self.input.functions.clone();
         for func_def in input_funcs {
+            self.current_var_scopes.clear();
+            for (b_idx, block) in func_def.body.iter().enumerate() {
+                for cmd in block {
+                    Self::collect_reads(cmd, |id| {
+                        self.current_var_scopes.entry(id).or_default().insert(b_idx);
+                    });
+                }
+            }
+
             let mut symbols = Vec::new();
             let mut params = Vec::new();
             for sym in &func_def.symbols {
                 if let Definition::Var(ty) = &sym.body {
                     if symbols.len() <= sym.id {
-                        symbols.resize(sym.id + 1, ("".into(), TypeKind::Void));
+                        symbols.resize(sym.id + 1, ("".into(), TypeKind::Void, 0));
                     }
-                    symbols[sym.id] = (sym.name.clone(), ty.clone());
+                    symbols[sym.id] = (sym.name.clone(), ty.clone(), sym.size.unwrap());
                 } else if let Definition::Parameter(ty) = &sym.body {
                     if params.len() <= sym.id {
-                        params.resize(sym.id + 1, ("".into(), TypeKind::Void));
+                        params.resize(sym.id + 1, ("".into(), TypeKind::Void, 0));
                     }
-                    params[sym.id] = (sym.name.clone(), ty.clone())
+                    params[sym.id] = (sym.name.clone(), ty.clone(), sym.size.unwrap())
                 }
             }
 
             self.functions
                 .push(Function::new(func_def.name, params, symbols));
             self.loc = (self.functions.len() - 1, 0);
+
             for (i, block) in func_def.body.iter().enumerate() {
                 self.functions[self.loc.0].blocks.push(vec![]);
                 self.loc.1 = i;
                 self.reset_phys_regs();
+                self.current_block_usage.clear();
+                self.register_lru.clear();
+                self.time_step = 0;
+
+                for cmd in block {
+                    Self::collect_reads(cmd, |id| {
+                        *self.current_block_usage.entry(id).or_default() += 1;
+                    });
+                }
+
                 for command in block {
                     self.process_command(command);
                 }
@@ -184,7 +218,118 @@ impl Backend {
         }
     }
 
+    fn touch_reg(&mut self, reg: PhysReg) {
+        self.time_step += 1;
+        self.register_lru.insert(reg, self.time_step);
+        // Update aliases so we don't evict half of a recently used register
+        match reg {
+            PhysReg::EX1 => {
+                self.register_lru.insert(PhysReg::R2, self.time_step);
+                self.register_lru.insert(PhysReg::R3, self.time_step);
+            }
+            PhysReg::EX2 => {
+                self.register_lru.insert(PhysReg::R4, self.time_step);
+                self.register_lru.insert(PhysReg::R5, self.time_step);
+            }
+            PhysReg::R2 | PhysReg::R3 => {
+                self.register_lru.insert(PhysReg::EX1, self.time_step);
+            }
+            PhysReg::R4 | PhysReg::R5 => {
+                self.register_lru.insert(PhysReg::EX2, self.time_step);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_reads<F>(cmd: &Command, mut callback: F)
+    where
+        F: FnMut(usize),
+    {
+        let mut check_val = |v: &Value| {
+            if let Value::Register(r) = v {
+                callback(r.id as usize);
+            }
+        };
+
+        match cmd {
+            Command::Add(a, b, _)
+            | Command::Sub(a, b, _)
+            | Command::Mul(a, b, _)
+            | Command::Div(a, b, _)
+            | Command::Mod(a, b, _)
+            | Command::And(a, b, _)
+            | Command::Or(a, b, _)
+            | Command::Xor(a, b, _)
+            | Command::Shl(a, b, _)
+            | Command::Shr(a, b, _)
+            | Command::Eq(a, b, _)
+            | Command::Gt(a, b, _)
+            | Command::Lt(a, b, _) => {
+                check_val(a);
+                check_val(b);
+            }
+            Command::Not(a, _) | Command::Move(a, _) | Command::Push(a) | Command::Load(a, _) => {
+                check_val(a);
+            }
+            Command::Store(val, ptr) => {
+                check_val(val);
+                check_val(ptr);
+            }
+            Command::JumpTrue(_, cond) | Command::JumpFalse(_, cond) => {
+                check_val(cond);
+            }
+            Command::Call(loc, _) => {
+                check_val(loc);
+            }
+            Command::Ret(Some(val)) => {
+                check_val(val);
+            }
+            Command::Pop(_) | Command::Jump(_) | Command::Ret(None) => {}
+        }
+    }
+
+    fn decrement_usage(&mut self, virt_id: usize) {
+        let is_zero = if let Some(count) = self.current_block_usage.get_mut(&virt_id) {
+            *count -= 1;
+            *count == 0
+        } else {
+            false
+        };
+        if is_zero {
+            let is_local = self
+                .current_var_scopes
+                .get(&virt_id)
+                .map(|s| s.len() == 1)
+                .unwrap_or(false);
+            if is_local {
+                self.release_reg(virt_id);
+            }
+        }
+    }
+
+    fn release_reg(&mut self, virt_id: usize) {
+        let func_idx = self.loc.0;
+        if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).cloned()
+        {
+            self.functions[func_idx].phys_owners.remove(&p);
+            self.functions[func_idx].dirty_regs.remove(&p);
+            self.functions[func_idx].virt_locs.remove(&virt_id);
+        }
+    }
+
+    fn resolve_and_free(&mut self, val: &Value) -> Inst {
+        let inst = self.resolve_operand(val);
+        if let Value::Register(r) = val {
+            self.decrement_usage(r.id as usize);
+        }
+        inst
+    }
+    fn log(&mut self, msg: String) {
+        self.logs.push(msg);
+    }
     fn process_command(&mut self, cmd: &Command) {
+        self.log(format!("Processing Command: {:?}", cmd));
+        let l = self.functions[self.loc.0].blocks[self.loc.1].len();
         match cmd {
             Command::Add(a, b, c) => self.emit_math(ArithmeticOp::Add, a, b, c),
             Command::Sub(a, b, c) => self.emit_math(ArithmeticOp::Sub, a, b, c),
@@ -199,40 +344,45 @@ impl Backend {
             Command::Shr(a, b, c) => self.emit_logic(LogicOp::Shr, a, b, c),
 
             Command::Not(a, out) => {
-                let op_a = self.resolve_operand(a);
-                let rout = self.kidnap_reg(PhysReg::R1, out.id as usize);
+                let op_a = self.resolve_and_free(a);
                 let ty = self.get_cmd_type(&out.ty);
+                let target = match ty {
+                    CommandType::I32 | CommandType::U32 => PhysReg::EX1,
+                    _ => PhysReg::R1,
+                };
+                // Ensure target is free, spill if necessary
+                if !self.is_reg_free(target) {
+                    self.spill(target);
+                }
+                self.claim_reg(target, out.id as usize);
+                // VM Logic ops write implicitly to R1/EX1
                 self.emit(Inst::OpCode(OpCode::Logic(LogicOp::Not, ty)));
                 self.emit(op_a);
-                self.emit(Inst::PhysReg(rout));
             }
             Command::Move(val, out) => {
-                let src = self.resolve_operand(val);
+                let src = self.resolve_and_free(val);
                 let dest = self.allocate_output(out);
                 let ty = self.get_cmd_type(&out.ty);
                 self.emit(Inst::OpCode(OpCode::Move(ty)));
                 self.emit(src);
                 self.emit(Inst::PhysReg(dest));
             }
-
             Command::Load(ptr, dest) => {
-                let p_ptr = self.resolve_operand(ptr);
+                let p_ptr = self.resolve_and_free(ptr);
                 let p_dest = self.allocate_output(dest);
                 let ty = self.get_cmd_type(&dest.ty);
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, ty)));
-                self.emit(p_ptr); // Address
-                self.emit(Inst::PhysReg(p_dest)); // Destination
+                self.emit(p_ptr);
+                self.emit(Inst::PhysReg(p_dest));
             }
-
             Command::Store(val, ptr) => {
-                let v_op = self.resolve_operand(val);
-                let p_op = self.resolve_operand(ptr);
-                // Type comes from the value being stored
                 let val_ty = self.get_val_ty(val);
                 let ty = self.get_cmd_type(&val_ty);
+                let v_op = self.resolve_and_free(val);
+                let p_op = self.resolve_and_free(ptr);
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
-                self.emit(v_op); // Value
-                self.emit(p_op); // Address
+                self.emit(p_op);
+                self.emit(v_op);
             }
             Command::Jump(loc) => {
                 self.flush_registers();
@@ -240,60 +390,58 @@ impl Backend {
                 self.emit(Inst::Location(loc.clone()));
             }
             Command::JumpTrue(loc, cond) => {
-                let op_c = self.resolve_operand(cond);
+                let op_c = self.resolve_and_free(cond);
                 self.flush_registers();
                 self.emit(Inst::OpCode(OpCode::JumpNotZero));
                 self.emit(Inst::Location(loc.clone()));
                 self.emit(op_c);
             }
             Command::JumpFalse(loc, cond) => {
-                let op_c = self.resolve_operand(cond);
+                let op_c = self.resolve_and_free(cond);
                 self.flush_registers();
                 self.emit(Inst::OpCode(OpCode::JumpZero));
                 self.emit(Inst::Location(loc.clone()));
                 self.emit(op_c);
             }
-            Command::Call(loc, count) => {
-                let loc_op = self.resolve_operand(loc);
+            Command::Call(loc, _) => {
+                let loc_op = self.resolve_and_free(loc);
                 self.emit(Inst::OpCode(OpCode::Call));
                 self.emit(loc_op);
-                self.emit(Inst::Immediate(Immediate {
-                    value: *count as f64,
-                    ty: TypeKind::Uint16,
-                }));
             }
             Command::Ret(val_opt) => {
-                let count = if let Some(val) = val_opt {
-                    let op = self.resolve_operand(val);
-                    let ty = match val {
-                        Value::Register(r) => r.ty.clone(),
-                        Value::Immediate(i) => i.ty.clone(),
-                        _ => TypeKind::Void,
-                    };
-                    let cmd_ty = self.get_cmd_type(&ty);
-                    self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, cmd_ty)));
-                    self.emit(op);
-                    1
+                if self.functions[self.loc.0].name == "main" {
+                    self.emit(Inst::OpCode(OpCode::Exit));
                 } else {
-                    0
-                };
-                self.emit(Inst::OpCode(OpCode::Return));
-                self.emit(Inst::Immediate(Immediate {
-                    value: count as f64,
-                    ty: TypeKind::Uint16,
-                }));
-                self.emit(Inst::SymbolSecLen);
-                self.emit(Inst::ArgCount);
+                    let count = if let Some(val) = val_opt {
+                        let ty = match val {
+                            Value::Register(r) => r.ty.clone(),
+                            Value::Immediate(i) => i.ty.clone(),
+                            _ => TypeKind::Void,
+                        };
+                        let op = self.resolve_and_free(val);
+                        let cmd_ty = self.get_cmd_type(&ty);
+                        self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, cmd_ty)));
+                        self.emit(op);
+                        1
+                    } else {
+                        0
+                    };
+                    self.emit(Inst::OpCode(OpCode::Return));
+                    self.emit(Inst::Immediate(Immediate {
+                        value: count as f64,
+                        ty: TypeKind::Uint16,
+                    }));
+                    self.emit(Inst::SymbolSecLen);
+                    self.emit(Inst::ArgCount);
+                }
             }
-            Command::Eq(a, b, c) => self.emit_cmp(OpCode::Eq(CommandType::I32), a, b, c),
-            Command::Gt(a, b, c) => self.emit_cmp(OpCode::GreaterThan(CommandType::I32), a, b, c),
-            Command::Lt(a, b, c) => self.emit_cmp(OpCode::LessThan(CommandType::I32), a, b, c),
+            Command::Eq(a, b, c) => self.emit_cmp(OpCode::Eq, a, b, c),
+            Command::Gt(a, b, c) => self.emit_cmp(OpCode::GreaterThan, a, b, c),
+            Command::Lt(a, b, c) => self.emit_cmp(OpCode::LessThan, a, b, c),
             Command::Push(a) => {
-                let op_a = self.resolve_operand(a);
-                self.emit(Inst::OpCode(OpCode::Stack(
-                    StackOp::Push,
-                    self.get_cmd_type(&self.get_val_ty(a)),
-                )));
+                let ty = self.get_cmd_type(&self.get_val_ty(a));
+                let op_a = self.resolve_and_free(a);
+                self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, ty)));
                 self.emit(op_a);
             }
             Command::Pop(a) => {
@@ -305,60 +453,96 @@ impl Backend {
                 self.emit(Inst::PhysReg(reg_a));
             }
         }
+        self.log(format!(
+            "Emitted: {:?}",
+            &self.functions[self.loc.0].blocks[self.loc.1][l..]
+        ));
     }
+
     fn emit(&mut self, inst: Inst) {
         self.functions[self.loc.0].blocks[self.loc.1].push(inst);
     }
 
+    // Helper to detect if an operand was clobbered by a spill and reload it if necessary
+    fn check_and_reload(
+        &mut self,
+        operand: Inst,
+        original_val: &Value,
+        spilled_reg: PhysReg,
+    ) -> Inst {
+        if let Inst::PhysReg(r) = operand {
+            // If operand was in the spilled register (or an alias), it's now invalid.
+            if r == spilled_reg || (self.is_ex1_alias(spilled_reg) && self.is_ex1_alias(r)) {
+                return self.resolve_operand(original_val);
+            }
+        }
+        operand
+    }
+
     fn emit_math(&mut self, op: ArithmeticOp, a: &Value, b: &Value, c: &Output) {
-        let op_a = self.resolve_operand(a);
-        let op_b = self.resolve_operand(b);
+        let mut op_a = self.resolve_and_free(a);
+        let mut op_b = self.resolve_and_free(b);
         let ty = self.get_cmd_type(&c.ty);
-        let out = self.kidnap_reg(
-            match ty {
-                CommandType::I16 => PhysReg::R1,
-                CommandType::F32 => PhysReg::F1,
-                CommandType::I32 => PhysReg::EX1,
-                CommandType::U16 => PhysReg::R1,
-                CommandType::U32 => PhysReg::EX1,
-            },
-            c.id as usize,
-        );
+
+        let hardcoded_dest = match ty {
+            CommandType::I16 | CommandType::U16 => PhysReg::R1,
+            CommandType::F32 => PhysReg::F1,
+            CommandType::I32 | CommandType::U32 => PhysReg::EX1,
+        };
+
+        // If destination is busy, spill it.
+        if !self.is_reg_free(hardcoded_dest) {
+            self.spill(hardcoded_dest);
+            op_a = self.check_and_reload(op_a, a, hardcoded_dest);
+            op_b = self.check_and_reload(op_b, b, hardcoded_dest);
+        }
+
+        self.claim_reg(hardcoded_dest, c.id as usize);
+        self.functions[self.loc.0].dirty_regs.insert(hardcoded_dest);
+
         self.emit(Inst::OpCode(OpCode::Arithmetic(op, ty)));
         self.emit(op_a);
         self.emit(op_b);
-        //self.emit(Inst::PhysReg(out));
     }
 
     fn emit_logic(&mut self, op: LogicOp, a: &Value, b: &Value, c: &Output) {
-        let op_a = self.resolve_operand(a);
-        let op_b = self.resolve_operand(b);
+        let mut op_a = self.resolve_and_free(a);
+        let mut op_b = self.resolve_and_free(b);
         let ty = self.get_cmd_type(&c.ty);
-        let out = self.kidnap_reg(
-            match ty {
-                CommandType::I16 => PhysReg::R1,
-                CommandType::F32 => PhysReg::F1,
-                CommandType::I32 => PhysReg::EX1,
-                CommandType::U16 => PhysReg::R1,
-                CommandType::U32 => PhysReg::EX1,
-            },
-            c.id as usize,
-        );
+
+        let hardcoded_dest = match ty {
+            CommandType::I32 | CommandType::U32 => PhysReg::EX1,
+            _ => PhysReg::R1,
+        };
+
+        if !self.is_reg_free(hardcoded_dest) {
+            self.spill(hardcoded_dest);
+            op_a = self.check_and_reload(op_a, a, hardcoded_dest);
+            op_b = self.check_and_reload(op_b, b, hardcoded_dest);
+        }
+        self.claim_reg(hardcoded_dest, c.id as usize);
+        self.functions[self.loc.0].dirty_regs.insert(hardcoded_dest);
+
         self.emit(Inst::OpCode(OpCode::Logic(op, ty)));
         self.emit(op_a);
         self.emit(op_b);
-        //self.emit(Inst::PhysReg(out));
     }
 
     fn emit_cmp(&mut self, op_code: OpCode, a: &Value, b: &Value, c: &Output) {
-        let op_a = self.resolve_operand(a);
-        let op_b = self.resolve_operand(b);
-        let reg_c = self.kidnap_reg(PhysReg::R1, c.id as usize);
+        let mut op_a = self.resolve_and_free(a);
+        let mut op_b = self.resolve_and_free(b);
+        // Comparisons usually output 0 or 1 to R1
+        if !self.is_reg_free(PhysReg::R1) {
+            self.spill(PhysReg::R1);
+            op_a = self.check_and_reload(op_a, a, PhysReg::R1);
+            op_b = self.check_and_reload(op_b, b, PhysReg::R1);
+        }
+        self.claim_reg(PhysReg::R1, c.id as usize);
+        self.functions[self.loc.0].dirty_regs.insert(PhysReg::R1);
 
         self.emit(Inst::OpCode(op_code));
         self.emit(op_a);
         self.emit(op_b);
-        //self.emit(Inst::PhysReg(reg_c));
     }
 
     fn resolve_operand(&mut self, val: &Value) -> Inst {
@@ -379,6 +563,7 @@ impl Backend {
         self.functions[self.loc.0].dirty_regs.insert(phys);
         phys
     }
+
     fn is_ex1_alias(&self, reg: PhysReg) -> bool {
         match reg {
             PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => true,
@@ -388,51 +573,62 @@ impl Backend {
 
     fn ensure_reg(&mut self, virt_id: usize) -> PhysReg {
         let func_idx = self.loc.0;
-
-        if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id) {
-            return *p;
-        }
-
-        let ty = self.registers[virt_id].ty.clone();
-        let phys = self.allocate_reg(&ty, virt_id);
-
-        if let Some(RegLoc::Stack(offset)) =
-            self.functions[func_idx].virt_locs.get(&virt_id).cloned()
-        {
-            let cmd_ty = self.get_cmd_type(&ty);
-            let needs_restore = !self.is_ex1_alias(phys);
-
-            if needs_restore {
-                self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
-                self.emit(Inst::PhysReg(PhysReg::EX1));
-            } else {
-                self.evict_if_busy(PhysReg::EX1);
-            }
-            self.emit(Inst::OpCode(OpCode::Arithmetic(
-                ArithmeticOp::Add,
-                CommandType::U32,
-            )));
-            self.emit(Inst::ARP);
-            self.emit(Inst::Immediate(Immediate {
-                value: offset as f64,
-                ty: TypeKind::Uint32,
-            }));
-            self.emit(Inst::PhysReg(PhysReg::EX1));
-            self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, cmd_ty)));
-            self.emit(Inst::PhysReg(PhysReg::EX1));
-            self.emit(Inst::PhysReg(phys));
-
-            if needs_restore {
-                self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
-                self.emit(Inst::PhysReg(PhysReg::EX1));
+        if let Some(rloc_ptr) = self.functions[func_idx].virt_locs.get(&virt_id) {
+            let rloc = rloc_ptr.clone();
+            if let RegLoc::Physical(p) = rloc {
+                let phys = p.clone();
+                self.touch_reg(phys);
+                return phys;
             }
 
-            self.functions[func_idx].dirty_regs.remove(&phys);
+            let ty = self.registers[virt_id].ty.clone();
+            let phys = self.allocate_reg(&ty, virt_id);
+
+            self.log(format!("RegLoc of vreg{}: {:?}", virt_id, rloc));
+            if let RegLoc::Stack(offset) = rloc {
+                self.log(format!(
+                    "Reloading vreg{} from stack offset {} into {:?}",
+                    virt_id, offset, phys
+                ));
+                let cmd_ty = self.get_cmd_type(&ty);
+                let owners: Vec<PhysReg> = self.functions[func_idx]
+                    .phys_owners
+                    .keys()
+                    .cloned()
+                    .collect();
+                for r in owners {
+                    if self.is_ex1_alias(r) && r != phys {
+                        self.spill(r);
+                    }
+                }
+                // Address Calculation: EX1 = ARP + offset
+                self.emit(Inst::OpCode(OpCode::Arithmetic(
+                    ArithmeticOp::Add,
+                    CommandType::I32,
+                )));
+                self.emit(Inst::ARP);
+                self.emit(Inst::StackOffset(offset));
+                self.emit(Inst::OpCode(OpCode::Arithmetic(
+                    ArithmeticOp::Add,
+                    CommandType::I32,
+                )));
+                self.emit(Inst::PhysReg(PhysReg::EX1));
+                self.emit(Inst::SymbolSecLen);
+
+                // Load *EX1 -> phys
+                self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, cmd_ty)));
+                self.emit(Inst::PhysReg(PhysReg::EX1)); // Address is in EX1
+                self.emit(Inst::PhysReg(phys)); // Dest
+
+                self.functions[func_idx].dirty_regs.remove(&phys);
+            }
+            phys
         } else {
+            let ty = self.registers[virt_id].ty.clone();
+            let phys = self.allocate_reg(&ty, virt_id);
             self.functions[func_idx].dirty_regs.insert(phys);
+            phys
         }
-
-        phys
     }
 
     fn allocate_reg(&mut self, ty: &TypeKind, owner_id: usize) -> PhysReg {
@@ -454,58 +650,21 @@ impl Backend {
                 return reg;
             }
         }
-
-        let victim = candidates[0];
-
-        // Handle Aliasing evictions
-        if victim == PhysReg::EX1 {
-            self.evict_if_busy(PhysReg::R2);
-            self.evict_if_busy(PhysReg::R3);
-            self.evict_if_busy(PhysReg::EX1);
-        } else if victim == PhysReg::EX2 {
-            self.evict_if_busy(PhysReg::R4);
-            self.evict_if_busy(PhysReg::R5);
-            self.evict_if_busy(PhysReg::EX2);
-        } else {
-            match victim {
-                PhysReg::R2 | PhysReg::R3 => self.evict_if_busy(PhysReg::EX1),
-                PhysReg::R4 | PhysReg::R5 => self.evict_if_busy(PhysReg::EX2),
-                _ => {}
-            }
-            self.evict_if_busy(victim);
-        }
-
+        // LRU Eviction: pick lowest timestamp
+        let victim = *candidates
+            .iter()
+            .min_by_key(|r| self.register_lru.get(r).unwrap_or(&0))
+            .unwrap_or(&candidates[0]);
+        self.spill(victim);
         self.claim_reg(victim, owner_id);
         victim
     }
-    fn kidnap_reg(&mut self, victim: PhysReg, owner_id: usize) -> PhysReg {
-        // Handle Aliasing evictions
-        if victim == PhysReg::EX1 {
-            self.evict_if_busy(PhysReg::R2);
-            self.evict_if_busy(PhysReg::R3);
-            self.evict_if_busy(PhysReg::EX1);
-        } else if victim == PhysReg::EX2 {
-            self.evict_if_busy(PhysReg::R4);
-            self.evict_if_busy(PhysReg::R5);
-            self.evict_if_busy(PhysReg::EX2);
-        } else {
-            match victim {
-                PhysReg::R2 | PhysReg::R3 => self.evict_if_busy(PhysReg::EX1),
-                PhysReg::R4 | PhysReg::R5 => self.evict_if_busy(PhysReg::EX2),
-                _ => {}
-            }
-            self.evict_if_busy(victim);
-        }
 
-        self.claim_reg(victim, owner_id);
-        victim
-    }
     fn is_reg_free(&self, reg: PhysReg) -> bool {
         let owners = &self.functions[self.loc.0].phys_owners;
         if owners.contains_key(&reg) {
             return false;
         }
-
         match reg {
             PhysReg::EX1 => {
                 !owners.contains_key(&PhysReg::R2) && !owners.contains_key(&PhysReg::R3)
@@ -519,10 +678,14 @@ impl Backend {
         }
     }
 
-    fn evict_if_busy(&mut self, reg: PhysReg) {
+    fn spill(&mut self, reg: PhysReg) {
+        //values spilled arent restored(virt12,virt18)
         let func_idx = self.loc.0;
-        if let Some(&owner_id) = self.functions[func_idx].phys_owners.get(&reg) {
+        let owner_opt = self.functions[func_idx].phys_owners.get(&reg).cloned();
+
+        if let Some(owner_id) = owner_opt {
             let is_dirty = self.functions[func_idx].dirty_regs.contains(&reg);
+
             let offset = match self.functions[func_idx].virt_locs.get(&owner_id).cloned() {
                 Some(RegLoc::Stack(o)) => o,
                 _ => {
@@ -531,50 +694,72 @@ impl Backend {
                     o
                 }
             };
+
             if is_dirty {
                 let ty = self.type_of_phys_reg(reg);
-
                 if self.is_ex1_alias(reg) {
-                    self.evict_if_busy(PhysReg::EX2);
-                    self.emit(Inst::OpCode(OpCode::Move(CommandType::I32)));
-                    self.emit(Inst::PhysReg(PhysReg::EX1));
-                    self.emit(Inst::PhysReg(PhysReg::EX2));
-                    self.emit(Inst::OpCode(OpCode::Arithmetic(
-                        ArithmeticOp::Add,
-                        CommandType::U32,
-                    )));
-                    self.emit(Inst::ARP);
-                    self.emit(Inst::Immediate(Immediate {
-                        value: offset as f64,
-                        ty: TypeKind::Uint32,
-                    }));
-                    self.emit(Inst::PhysReg(PhysReg::EX1));
-                    self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
-                    self.emit(Inst::PhysReg(PhysReg::EX2));
-                    self.emit(Inst::PhysReg(PhysReg::EX1));
-                } else {
+                    let ty = self.type_of_phys_reg(reg);
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
+                    self.emit(Inst::PhysReg(PhysReg::EX2));
+                    self.emit(Inst::OpCode(OpCode::Move(ty)));
                     self.emit(Inst::PhysReg(PhysReg::EX1));
+                    self.emit(Inst::PhysReg(PhysReg::EX2));
+                    self.emit(Inst::OpCode(OpCode::Arithmetic(
+                        ArithmeticOp::Add,
+                        CommandType::I32,
+                    )));
+                    self.emit(Inst::ARP);
+                    self.emit(Inst::StackOffset(offset));
+                    self.emit(Inst::OpCode(OpCode::Arithmetic(
+                        ArithmeticOp::Add,
+                        CommandType::I32,
+                    )));
+                    self.emit(Inst::PhysReg(PhysReg::EX1));
+                    self.emit(Inst::SymbolSecLen);
+                    let temp_reg = match reg {
+                        PhysReg::EX1 => PhysReg::EX2,
+                        PhysReg::R2 => PhysReg::R4,
+                        PhysReg::R3 => PhysReg::R5,
+                        _ => unreachable!(),
+                    };
+                    self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
+                    self.emit(Inst::PhysReg(PhysReg::EX1)); // Address
+                    self.emit(Inst::PhysReg(temp_reg)); // Value
+                    self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
+                    self.emit(Inst::PhysReg(PhysReg::EX2));
+                } else {
+                    let owners: Vec<PhysReg> = self.functions[func_idx]
+                        .phys_owners
+                        .keys()
+                        .cloned()
+                        .collect();
+                    for r in owners {
+                        if self.is_ex1_alias(r) {
+                            self.spill(r);
+                        }
+                    }
 
                     self.emit(Inst::OpCode(OpCode::Arithmetic(
                         ArithmeticOp::Add,
-                        CommandType::U32,
+                        CommandType::I32,
                     )));
                     self.emit(Inst::ARP);
-                    self.emit(Inst::Immediate(Immediate {
-                        value: offset as f64,
-                        ty: TypeKind::Uint32,
-                    }));
+                    self.emit(Inst::StackOffset(offset));
+                    self.emit(Inst::OpCode(OpCode::Arithmetic(
+                        ArithmeticOp::Add,
+                        CommandType::I32,
+                    )));
                     self.emit(Inst::PhysReg(PhysReg::EX1));
-
+                    self.emit(Inst::SymbolSecLen);
                     self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
+                    self.emit(Inst::PhysReg(PhysReg::EX1));
                     self.emit(Inst::PhysReg(reg));
-                    self.emit(Inst::PhysReg(PhysReg::EX1));
-
-                    self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
-                    self.emit(Inst::PhysReg(PhysReg::EX1));
                 }
             }
+            self.log(format!(
+                "Spilling vreg{} into stack offset {} from phys {:?}",
+                owner_id, offset, reg
+            ));
             self.functions[func_idx]
                 .virt_locs
                 .insert(owner_id, RegLoc::Stack(offset));
@@ -589,17 +774,20 @@ impl Backend {
             _ => 1,
         }
     }
+
     fn type_of_phys_reg(&self, r: PhysReg) -> CommandType {
         match r {
             PhysReg::EX1 | PhysReg::EX2 => CommandType::I32,
             PhysReg::F1 | PhysReg::F2 => CommandType::F32,
-            PhysReg::R1 | PhysReg::R2 | PhysReg::R3 | PhysReg::R4 | PhysReg::R5 => CommandType::I16,
+            _ => CommandType::I16,
         }
     }
+
     fn claim_reg(&mut self, reg: PhysReg, virt_id: usize) {
         let func = &mut self.functions[self.loc.0];
         func.phys_owners.insert(reg, virt_id);
         func.virt_locs.insert(virt_id, RegLoc::Physical(reg));
+        self.touch_reg(reg);
     }
 
     fn reset_phys_regs(&mut self) {
@@ -614,7 +802,7 @@ impl Backend {
             .cloned()
             .collect();
         for r in active {
-            self.evict_if_busy(r);
+            self.spill(r);
         }
     }
 
@@ -637,16 +825,7 @@ impl Backend {
             _ => CommandType::U32,
         }
     }
-    pub fn display_ir(&self) {
-        for fun in &self.functions {
-            println!("fn {}({:?})->{{", fun.name, fun.params);
-            for (i, block) in fun.blocks.iter().enumerate() {
-                println!("  block {}:", i);
-                println!("  {:#?}", block);
-            }
-            println!("}}");
-        }
-    }
+
     pub fn emit_bytecode(&mut self) -> Executable {
         let mut exe = Executable::new();
         for fun in &self.functions {
@@ -658,8 +837,7 @@ impl Backend {
                     .map(|block| {
                         block
                             .iter()
-                            .map(|instr| {
-                                match instr {
+                            .map(|instr| match instr {
                                 Inst::ARP => Bytecode::Register(CmdType::ARP),
                                 Inst::ArgCount => Bytecode::ArgCount(),
                                 Inst::SymbolSecLen => Bytecode::SymbolSectionLen(),
@@ -677,16 +855,11 @@ impl Backend {
                                     &ir::Location::None => unreachable!(),
                                 },
                                 Inst::Immediate(im) => match im.ty {
-                                    TypeKind::Int16 => Bytecode::Int(im.value as i16),
-                                    TypeKind::Int32 => Bytecode::Int32(im.value as i32),
-                                    TypeKind::Bool => Bytecode::Int(im.value as i16),
-                                    TypeKind::Enum(_) => Bytecode::Int(im.value as i16),
-                                    TypeKind::Pointer(_) => Bytecode::Int32(im.value as i32),
                                     TypeKind::Float32 => Bytecode::Float(im.value as f32),
-                                    TypeKind::Char => Bytecode::Int(im.value as i16),
-                                    TypeKind::Uint16 => Bytecode::Int(im.value as i16),
-                                    TypeKind::Uint32 => Bytecode::Int32(im.value as i32),
-                                    _ => unreachable!(),
+                                    TypeKind::Int32 | TypeKind::Uint32 | TypeKind::Pointer(_) => {
+                                        Bytecode::Int32(im.value as i32)
+                                    }
+                                    _ => Bytecode::Int(im.value as i16),
                                 },
                                 Inst::StackOffset(off) => Bytecode::Int(*off as i16),
                                 Inst::PhysReg(r) => match r {
@@ -701,22 +874,118 @@ impl Backend {
                                     PhysReg::F2 => Bytecode::Register(CmdType::F2),
                                 },
                                 Inst::OpCode(op) => match op {
+                                    OpCode::Exit => Bytecode::Command(CmdType::Exit),
                                     OpCode::Call => Bytecode::Command(CmdType::Call),
-                                    OpCode::Return=>Bytecode::Command(CmdType::Return),
-                                    OpCode::Jump=>Bytecode::Command(CmdType::Jump),
-                                    OpCode::JumpNotZero=>Bytecode::Command(CmdType::JumpNotZero),
-                                    OpCode::JumpZero=>Bytecode::Command(CmdType::JumpZero),
-                                    OpCode::Eq(CmdType)=>Bytecode::Command(CmdType::),
+                                    OpCode::Return => Bytecode::Command(CmdType::Return),
+                                    OpCode::Jump => Bytecode::Command(CmdType::Jump),
+                                    OpCode::JumpNotZero => Bytecode::Command(CmdType::JumpNotZero),
+                                    OpCode::JumpZero => Bytecode::Command(CmdType::JumpZero),
+                                    OpCode::Eq => Bytecode::Command(CmdType::Equals),
+                                    OpCode::GreaterThan => Bytecode::Command(CmdType::Greater),
+                                    OpCode::LessThan => Bytecode::Command(CmdType::LessThan),
+                                    OpCode::Move(_) => Bytecode::Command(CmdType::Mov),
+                                    OpCode::Stack(sop, ty) => Bytecode::Command(match sop {
+                                        StackOp::Push => match ty {
+                                            CommandType::F32 => CmdType::Pushf,
+                                            CommandType::I16 | CommandType::U16 => CmdType::Push,
+                                            CommandType::I32 | CommandType::U32 => CmdType::PushEx,
+                                        },
+                                        StackOp::Pop => CmdType::Pop,
+                                    }),
+                                    OpCode::Memory(mop, ty) => Bytecode::Command(match mop {
+                                        MemoryOp::Load => match ty {
+                                            CommandType::F32 => CmdType::Loadf,
+                                            CommandType::I32 | CommandType::U32 => CmdType::LoadEx,
+                                            _ => CmdType::Load,
+                                        },
+                                        MemoryOp::Store => match ty {
+                                            CommandType::F32 => CmdType::Storef,
+                                            CommandType::I32 | CommandType::U32 => CmdType::StoreEx,
+                                            _ => CmdType::Store,
+                                        },
+                                    }),
+                                    OpCode::Arithmetic(aop, ty) => Bytecode::Command(match aop {
+                                        ArithmeticOp::Add => match ty {
+                                            CommandType::I16 => CmdType::Add,
+                                            CommandType::U16 => CmdType::AddU,
+                                            CommandType::I32 => CmdType::AddEx,
+                                            CommandType::U32 => CmdType::AddExU,
+                                            CommandType::F32 => CmdType::Addf,
+                                        },
+                                        ArithmeticOp::Sub => match ty {
+                                            CommandType::I16 => CmdType::Sub,
+                                            CommandType::U16 => CmdType::SubU,
+                                            CommandType::I32 => CmdType::SubEx,
+                                            CommandType::U32 => CmdType::SubExU,
+                                            CommandType::F32 => CmdType::Subf,
+                                        },
+                                        ArithmeticOp::Mul => match ty {
+                                            CommandType::I16 => CmdType::Mul,
+                                            CommandType::U16 => CmdType::MulU,
+                                            CommandType::I32 => CmdType::MulEx,
+                                            CommandType::U32 => CmdType::MulExU,
+                                            CommandType::F32 => CmdType::Mulf,
+                                        },
+                                        ArithmeticOp::Div => match ty {
+                                            CommandType::I16 => CmdType::Div,
+                                            CommandType::U16 => CmdType::DivU,
+                                            CommandType::I32 => CmdType::DivEx,
+                                            CommandType::U32 => CmdType::DivExU,
+                                            CommandType::F32 => CmdType::Divf,
+                                        },
+                                        ArithmeticOp::Mod => CmdType::Mod,
+                                    }),
+                                    OpCode::Logic(lop, ty) => Bytecode::Command(match lop {
+                                        LogicOp::And => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::AndEx,
+                                            _ => CmdType::And,
+                                        },
+                                        LogicOp::Or => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::OrEx,
+                                            _ => CmdType::Or,
+                                        },
+                                        LogicOp::Xor => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::XorEx,
+                                            _ => CmdType::Xor,
+                                        },
+                                        LogicOp::Not => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::NotEx,
+                                            _ => CmdType::Not,
+                                        },
+                                        LogicOp::Shl => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::ShlEx,
+                                            _ => CmdType::Shl,
+                                        },
+                                        LogicOp::Shr => match ty {
+                                            CommandType::I32
+                                            | CommandType::U32
+                                            | CommandType::F32 => CmdType::ShrEx,
+                                            _ => CmdType::Shr,
+                                        },
+                                    }),
                                 },
-                            }
                             })
                             .collect()
                     })
                     .collect::<Vec<Vec<Bytecode>>>(),
             );
-            for (name, ty) in fun.symbols.iter() {
-                bytefn.add_symbol(name, 0);
+            for (name, _, size) in fun.symbols.iter() {
+                bytefn.add_symbol(name, *size);
             }
+            bytefn.add_symbol(
+                "__internal_reg_save_463653961935601537679876958223",
+                fun.stack_bytes,
+            );
             exe.add_fn(bytefn);
         }
         exe

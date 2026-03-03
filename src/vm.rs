@@ -50,7 +50,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i16) as u16)
                 .collect();
-            machine.core.r1 = (args[0] + args[1]) as i16;
+            machine.core.r1 = ((args[0] + args[1]) as u16) as i16;
             if machine.debug {
                 println!("AddUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
             }
@@ -61,7 +61,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i16) as u16)
                 .collect();
-            machine.core.r1 = (args[0] - args[1]) as i16;
+            machine.core.r1 = ((args[0] - args[1]) as u16) as i16;
             if machine.debug {
                 println!("SubUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
             }
@@ -72,7 +72,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i16) as u16)
                 .collect();
-            machine.core.r1 = (args[0] * args[1]) as i16;
+            machine.core.r1 = ((args[0] * args[1]) as u16) as i16;
             if machine.debug {
                 println!("MulUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
             }
@@ -83,7 +83,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i16) as u16)
                 .collect();
-            machine.core.r1 = (args[0] / args[1]) as i16;
+            machine.core.r1 = ((args[0] / args[1]) as u16) as i16;
             if machine.debug {
                 println!("DivUnsigned {} {} -> {}", args[0], args[1], machine.core.r1);
             }
@@ -94,7 +94,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i32) as u32)
                 .collect();
-            set_reg(10, &mut machine.core, (args[0] + args[1]) as f64);
+            set_reg(10, &mut machine.core, ((args[0] + args[1]) as u32) as f64);
             if machine.debug {
                 println!(
                     "AddExUnsigned {} {} -> {}",
@@ -110,7 +110,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i32) as u32)
                 .collect();
-            set_reg(10, &mut machine.core, (args[0] - args[1]) as f64);
+            set_reg(10, &mut machine.core, ((args[0] - args[1]) as u32) as f64);
             if machine.debug {
                 println!(
                     "SubExUnsigned {} {} -> {}",
@@ -126,7 +126,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i32) as u32)
                 .collect();
-            set_reg(10, &mut machine.core, (args[0] * args[1]) as f64);
+            set_reg(10, &mut machine.core, ((args[0] * args[1]) as u32) as f64);
             if machine.debug {
                 println!(
                     "MulExUnsigned {} {} -> {}",
@@ -142,7 +142,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 .iter()
                 .map(|x| (*x as i32) as u32)
                 .collect();
-            set_reg(10, &mut machine.core, (args[0] / args[1]) as f64);
+            set_reg(10, &mut machine.core, ((args[0] / args[1]) as u32) as f64);
             if machine.debug {
                 println!(
                     "DivExUnsigned {} {} -> {}",
@@ -302,6 +302,73 @@ fn exec_bytecode(machine: &mut Machine) {
                 println!("Not {} -> {}", args[0], machine.core.r1);
             }
         }
+        CommandType::Xor => {
+            //xor(i16,i16) -> r1
+            let args = take_bytes(machine, 2);
+            machine.core.r1 = args[0] as i16 ^ (args[1] as i16);
+            if machine.debug {
+                println!("Xor {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
+        CommandType::AndEx => {
+            //andEx(i32,i32)->ex1
+            let args = take_bytes(machine, 2);
+            set_reg(
+                10,
+                &mut machine.core,
+                (args[0] as i32 & (args[1] as i32)) as f64,
+            );
+            if machine.debug {
+                println!(
+                    "AndEx {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::OrEx => {
+            //andEx(i32,i32)->ex1
+            let args = take_bytes(machine, 2);
+            set_reg(
+                10,
+                &mut machine.core,
+                (args[0] as i32 | (args[1] as i32)) as f64,
+            );
+            if machine.debug {
+                println!(
+                    "OrEx {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::XorEx => {
+            //andEx(i32,i32)->ex1
+            let args = take_bytes(machine, 2);
+            set_reg(
+                10,
+                &mut machine.core,
+                (args[0] as i32 ^ (args[1] as i32)) as f64,
+            );
+            if machine.debug {
+                println!(
+                    "XorEx {} {} -> {}",
+                    args[0],
+                    args[1],
+                    get_reg(10, &machine.core)
+                );
+            }
+        }
+        CommandType::NotEx => {
+            //notEx(i32) -> ex1
+            let args = take_bytes(machine, 1);
+            set_reg(10, &mut machine.core, (!(args[0] as i32) as i32) as f64);
+            if machine.debug {
+                println!("NotEx {} -> {}", args[0], get_reg(10, &machine.core));
+            }
+        }
         CommandType::Shl => {
             //shl(i16,i16) -> r1
             let args = take_bytes(machine, 2);
@@ -352,14 +419,7 @@ fn exec_bytecode(machine: &mut Machine) {
                 );
             }
         }
-        CommandType::Xor => {
-            //xor(i16,i16) -> r1
-            let args = take_bytes(machine, 2);
-            machine.core.r1 = args[0] as i16 ^ (args[1] as i16);
-            if machine.debug {
-                println!("Xor {} {} -> {}", args[0], args[1], machine.core.r1);
-            }
-        }
+
         CommandType::Push => {
             //push(i16)
             let args = take_bytes(machine, 1);
@@ -462,7 +522,7 @@ fn exec_bytecode(machine: &mut Machine) {
             //storeEx(address,i32)
             let args = take_bytes(machine, 2);
             machine.memory.write_range(
-                args[0] as usize..(args[0] + 1.0) as usize,
+                args[0] as usize..(args[0] + 2.0) as usize,
                 convert_i32_to_i16(args[1] as i32).to_vec(),
                 &mut machine.core,
             );
@@ -532,7 +592,7 @@ fn exec_bytecode(machine: &mut Machine) {
         CommandType::Call => {
             //call(fnptr)
             let func = take_bytes(machine, 1)[0];
-            let arp = machine.core.srp + 4 * 1024 * 1024;
+            let arp = machine.core.srp + 16 * 1024 * 1024;
             machine.core.stack.push(
                 DataType::Int32(machine.core.arp as i32),
                 &mut machine.core.srp,
@@ -697,7 +757,7 @@ impl Machine {
             core: Core::new(),
             debug,
             on: true,
-            memory: Memory::new(4 * 1024 * 1024), //4MB max
+            memory: Memory::new(16 * 1024 * 1024), //16MB max
             freq: (0, Instant::now()),
         };
         m
@@ -957,10 +1017,11 @@ impl Core {
             f1: 0.0,
             f2: 0.0,
             srp: 0,
-            arp: 4 * 1024 * 1024,
+            arp: 16 * 1024 * 1024,
         }
     }
 }
+type CoreState = (i16, i16, i16, i16, i16, f32, f32, usize);
 #[derive(Debug)]
 pub struct Memory {
     data: Vec<i16>,
@@ -990,7 +1051,8 @@ impl Memory {
     }
     pub fn write(&mut self, index: usize, value: i16, core: &mut Core) {
         if index >= self.max_size {
-            core.stack.write_bytes(index - self.max_size, vec![value])
+            core.stack
+                .write_bytes(index - self.max_size, vec![value], &mut core.srp)
         } else {
             if index < self.data.len() {
                 self.data[index] = value;
@@ -1066,21 +1128,23 @@ impl Stack {
         self.data.insert(*srp, x);
         *srp += 1;
     }
-    fn convert_byte_index_to_stack(&self, byte_index: usize) -> (usize, usize) {
+    fn convert_byte_index_to_stack(&self, byte_index: usize) -> Option<(usize, usize)> {
         let mut byte_count = 0;
         for (i, dt) in self.data.iter().enumerate() {
             let size = dt_size(*dt);
             if byte_count + size > byte_index {
-                return (i, byte_index - byte_count);
+                return Some((i, byte_index - byte_count));
             }
             byte_count += size;
         }
-        (0, 0)
+        None
     }
     pub fn read_bytes(&self, byte_index: usize, len: usize) -> Vec<i16> {
         let mut bytes = Vec::new();
         for i in byte_index..byte_index + len {
-            let (index, offset) = self.convert_byte_index_to_stack(i);
+            let (index, offset) = self
+                .convert_byte_index_to_stack(i)
+                .unwrap_or_else(|| panic!("Address out of bounds: {}", byte_index));
             bytes.push(
                 unpack_dt_to_bytes(
                     *self
@@ -1092,10 +1156,12 @@ impl Stack {
         }
         bytes
     }
-    pub fn write_bytes(&mut self, byte_index: usize, bytes: Vec<i16>) {
+    pub fn write_bytes(&mut self, byte_index: usize, bytes: Vec<i16>, srp: &mut usize) {
         for i in byte_index..byte_index + bytes.len() {
-            let (index, offset) = self.convert_byte_index_to_stack(i);
-
+            let (index, offset) = self.convert_byte_index_to_stack(i).unwrap_or_else(|| {
+                self.resize(i + 1, srp);
+                self.convert_byte_index_to_stack(i).unwrap()
+            });
             *self
                 .data
                 .get_mut(index)

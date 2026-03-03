@@ -9,6 +9,7 @@ use crate::compiler::parser::{
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use std::collections::{BTreeMap, HashMap};
+use std::hash::Hash;
 #[derive(Clone, Debug)]
 pub struct Register {
     pub id: u16,
@@ -70,6 +71,7 @@ pub struct Symbol {
     pub name: String,
     pub body: Definition,
     pub id: usize,
+    pub size: Option<usize>,
 }
 #[derive(Clone, Debug)]
 pub enum Definition {
@@ -179,8 +181,9 @@ impl IrGen {
     fn define_var(&mut self, name: String, ty: TypeKind) {
         let symbol = Symbol {
             name,
-            body: Definition::Var(ty),
+            body: Definition::Var(ty.clone()),
             id: self.next_id,
+            size: self.size_of(ty, SourceLocation { line: 0, col: 0 }),
         };
         self.functions[self.current_fn].symbols.push(symbol.clone());
         self.next_id += 1;
@@ -191,6 +194,7 @@ impl IrGen {
             name,
             body: Definition::User(ty),
             id: self.next_id,
+            size: None,
         };
         self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
@@ -200,6 +204,7 @@ impl IrGen {
             name,
             body: Definition::Function(functy, id),
             id: self.next_id,
+            size: None,
         };
         self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
@@ -207,8 +212,9 @@ impl IrGen {
     fn define_parameter(&mut self, name: String, ty: TypeKind) {
         let symbol = Symbol {
             name,
-            body: Definition::Parameter(ty),
+            body: Definition::Parameter(ty.clone()),
             id: self.next_id,
+            size: self.size_of(ty, SourceLocation { line: 0, col: 0 }),
         };
         self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
@@ -888,8 +894,8 @@ impl IrGen {
                             temp.clone(),
                         ));
                         self.emit_instruction(Command::Store(
-                            Value::Register(reg.clone()),
                             Value::Register(temp.clone()),
+                            Value::Register(reg.clone()),
                         ));
                         self.deallocate_register(reg.id);
                         self.deallocate_register(temp.id);
@@ -933,11 +939,11 @@ impl IrGen {
                         temp.clone(),
                     ));
                     self.emit_instruction(Command::Store(
+                        Value::Register(temp.clone()),
                         Value::Immediate(Immediate {
                             value: c as u8 as f64,
                             ty: TypeKind::Char,
                         }),
-                        Value::Register(temp.clone()),
                     ));
                     self.deallocate_register(temp.id);
                 }
@@ -948,11 +954,11 @@ impl IrGen {
                     temp.clone(),
                 ));
                 self.emit_instruction(Command::Store(
+                    Value::Register(temp.clone()),
                     Value::Immediate(Immediate {
                         value: 0.0,
                         ty: TypeKind::Char,
                     }),
-                    Value::Register(temp.clone()),
                 ));
                 self.deallocate_register(temp.id);
                 let out = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Array(
@@ -992,8 +998,8 @@ impl IrGen {
                                         temp.clone(),
                                     ));
                                     self.emit_instruction(Command::Store(
-                                        Value::Register(expr.clone()),
                                         Value::Register(temp.clone()),
+                                        Value::Register(expr.clone()),
                                     ));
                                     self.deallocate_register(expr.id);
                                     self.deallocate_register(temp.id);
@@ -1054,11 +1060,11 @@ impl IrGen {
                                 temp.clone(),
                             ));
                             self.emit_instruction(Command::Store(
+                                Value::Register(temp.clone()),
                                 Value::Immediate(Immediate {
                                     value: def.keys().position(|x| *x == variant)? as f64,
                                     ty: TypeKind::Uint16,
                                 }),
-                                Value::Register(temp.clone()),
                             ));
                             self.emit_instruction(Command::Add(
                                 Value::Location(Location::Symbol(symbol.id, 1)),
@@ -1066,8 +1072,8 @@ impl IrGen {
                                 temp.clone(),
                             ));
                             self.emit_instruction(Command::Store(
-                                Value::Register(expr.clone()),
                                 Value::Register(temp.clone()),
+                                Value::Register(expr.clone()),
                             ));
                             self.deallocate_register(expr.id);
                             self.deallocate_register(temp.id);
@@ -1223,8 +1229,8 @@ impl IrGen {
                     temp.clone(),
                 ));
                 self.emit_instruction(Command::Store(
-                    Value::Register(val.clone()),
                     Value::Register(temp.clone()),
+                    Value::Register(val.clone()),
                 ));
                 self.deallocate_register(temp.id);
                 self.emit_instruction(true_move);
@@ -1347,6 +1353,7 @@ impl IrGen {
                     name: "".to_string(),
                     body: Definition::Var(TypeKind::Void),
                     id: 0,
+                    size: None,
                 };
                 let type_def = if let Definition::User(UserType::Struct(map)) = self
                     .lookup_symbol(&name)
@@ -1669,7 +1676,7 @@ impl IrGen {
         }
     }
     fn unwrap_fn_type(
-        &self,
+        &mut self,
         ty: TypeKind,
         loc: SourceLocation,
     ) -> Option<(Vec<TypeKind>, TypeKind)> {
@@ -1683,7 +1690,7 @@ impl IrGen {
         None
     }
     pub fn size_of(&self, ty: TypeKind, loc: SourceLocation) -> Option<usize> {
-        match ty {
+        let size = match ty {
             TypeKind::Int16 => Some(1),
             TypeKind::Uint16 => Some(1),
             TypeKind::Bool => Some(1),
@@ -1708,7 +1715,7 @@ impl IrGen {
             TypeKind::Function(_, _) => None,
             TypeKind::Void => Some(0),
             TypeKind::Enum(_) => Some(1),
-            TypeKind::Union(name) => {
+            TypeKind::Union(ref name) => {
                 let union_def = self.lookup_symbol(&name)?;
                 if let Definition::User(UserType::Union(fields)) = &union_def.body {
                     Some(
@@ -1723,6 +1730,7 @@ impl IrGen {
                     None
                 }
             }
-        }
+        };
+        size
     }
 }

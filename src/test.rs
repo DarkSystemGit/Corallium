@@ -1,9 +1,8 @@
+use crate::compiler::compile;
 use crate::devices::audio::load_wav;
 use crate::devices::disk::{Disk, DiskSection, DiskSectionType};
 use crate::executable::{Bytecode, Data, Executable, Fn, Library};
-use crate::util::{
-    convert_float, convert_u32_to_i16, flatten_vec, gen_3d_matrix,
-};
+use crate::util::{convert_float, convert_u32_to_i16, flatten_vec, gen_3d_matrix};
 use crate::vm::CommandType::*;
 use crate::vm::CommandType::{Load, Mov, NOP};
 use crate::vm::{DataType, Machine};
@@ -16,10 +15,14 @@ struct TestCase {
 enum TestType {
     External(Executable),
     Internal(fn(&mut Machine)),
+    Compiler(String),
 }
 impl TestCase {
-    fn new(name: String, ttype: TestType) -> Self {
-        TestCase { name, ttype }
+    fn new(name: &str, ttype: TestType) -> Self {
+        TestCase {
+            name: name.to_string(),
+            ttype,
+        }
     }
 }
 pub fn run_cases() {
@@ -38,6 +41,21 @@ pub fn run_cases() {
                 machine.run();
             }
             TestType::Internal(ref func) => func(&mut machine),
+            TestType::Compiler(code) => {
+                let (exe, logs) = compile(&case.name, code.as_str());
+                let mut disk: Disk = vec![DiskSection {
+                    section_type: DiskSectionType::Entrypoint,
+                    id: 0,
+                    data: vec![],
+                }] as Disk;
+                exe.build(0, &mut disk, true);
+                machine.set_disk(disk);
+                machine.debug = true;
+                machine.run();
+                for log in logs {
+                    println!("{}", log);
+                }
+            }
         }
         println!("Final State:");
         machine.dump_state();
@@ -45,11 +63,32 @@ pub fn run_cases() {
     }
 }
 fn get_cases() -> Vec<TestCase> {
-    vec![
-        TestCase::new("stack_case".to_string(), TestType::Internal(stack_case)),
+    let cases = vec![
+        comp_arithmentic(),
+        TestCase::new("stack_case", TestType::Internal(stack_case)),
         gfx_case(),
         orig_case(),
-    ]
+    ];
+    cases
+        .into_iter()
+        .filter(|x| input!("Run case {} [y/n]:", x.name) == "y")
+        .collect()
+}
+fn comp_arithmentic() -> TestCase {
+    TestCase::new(
+        "CompilerArithmetic",
+        TestType::Compiler(
+            r#"
+                fn main() -> void {
+                    let x: i16=1+2+3;
+                    let y: i16=4*5*6;
+                    let z: i32=(y as i32)/(x as i32);
+                    return;
+                }
+                "#
+            .to_string(),
+        ),
+    )
 }
 fn stack_case(machine: &mut Machine) {
     machine
@@ -66,23 +105,23 @@ fn stack_case(machine: &mut Machine) {
         .push(DataType::Float(1024.0), &mut machine.core.srp);
     let mut byte = Vec::new();
     for i in 0..5 {
-        byte.push(machine.memory.read(4 * 1024 * 1024 + i, machine));
+        byte.push(machine.memory.read(16 * 1024 * 1024 + i, machine));
     }
     dbg!(&byte);
     machine.memory.write_range(
-        4 * 1024 * 1024..4 * 1024 * 1024 + 2,
+        16 * 1024 * 1024..16 * 1024 * 1024 + 2,
         vec![1, 2],
         &mut machine.core,
     );
     machine.memory.write_range(
-        4 * 1024 * 1024 + 3..4 * 1024 * 1024 + 5,
+        16 * 1024 * 1024 + 3..16 * 1024 * 1024 + 5,
         convert_float(96.0),
         &mut machine.core,
     );
     byte.clear();
     let mut byte = Vec::new();
     for i in 0..5 {
-        byte.push(machine.memory.read(4 * 1024 * 1024 + i, machine));
+        byte.push(machine.memory.read(16 * 1024 * 1024 + i, machine));
     }
     dbg!(&byte);
 }

@@ -1,3 +1,4 @@
+use super::lexer::OperatorKind;
 use super::parser::{
     BinaryOperator, EnumDeclaration, ForStatement, IfStatement, Pattern, ReturnStatement,
     StructDeclaration, UnaryOperator, UnionDeclaration, WhileStatement,
@@ -95,6 +96,7 @@ pub struct Function {
     current_block: usize,
     loop_stack: Vec<[usize; 2]>,
     loop_patches: HashMap<usize, Vec<usize>>,
+
     pub symbols: Vec<Symbol>,
 }
 #[derive(Debug)]
@@ -110,6 +112,7 @@ pub struct IrGen {
     next_fn_id: usize,
     pub registers: Vec<Register>,
     next_reg: u16,
+    defer_stack: Vec<Vec<Statement>>,
 }
 impl IrGen {
     pub fn new(filename: &str, input: String) -> Self {
@@ -126,6 +129,7 @@ impl IrGen {
                 loop_patches: HashMap::new(),
                 symbols: Vec::new(),
             }],
+            defer_stack: Vec::new(),
             imports: Vec::new(),
             file_path: filename.to_string(),
             current_fn: 0,
@@ -174,8 +178,16 @@ impl IrGen {
     }
     fn push_scope(&mut self) {
         self.scopes.push(Vec::new());
+        self.defer_stack.push(Vec::new());
     }
     fn pop_scope(&mut self) {
+        let defers = self.defer_stack.pop();
+        if defers.is_some() {
+            defers
+                .unwrap()
+                .into_iter()
+                .for_each(|x| self.compile_statement(x));
+        }
         self.scopes.pop();
     }
     fn define_var(&mut self, name: String, ty: TypeKind) {
@@ -302,6 +314,12 @@ impl IrGen {
             StatementKind::Union(decl) => {
                 self.compile_union(decl, statement.loc);
             }
+            StatementKind::Assignment(var, assign) => {
+                self.compile_assignment(var, assign, statement.loc);
+            }
+            StatementKind::Defer(stmt) => {
+                self.compile_defer(*stmt);
+            }
         }
     }
     fn compile_struct(&mut self, structDef: StructDeclaration, loc: SourceLocation) {
@@ -340,8 +358,8 @@ impl IrGen {
             symbols: Vec::new(),
         });
         self.compile_statement(*func.body);
-        self.pop_scope();
         self.current_fn = curr_fn;
+        self.pop_scope();
     }
     fn compile_expression(&mut self, expr: Expression, loc: SourceLocation) -> Option<Output> {
         match expr {
@@ -646,37 +664,10 @@ impl IrGen {
             Expression::Grouped(expr) => self.compile_expression(*expr, loc),
             Expression::Literal(lit) => self.compile_literal(lit, loc),
             Expression::Identifier(ident) => {
-                let symbol = self.lookup_symbol(&ident);
-                if let Some(symbol) = symbol {
-                    if let Definition::Var(ty) = symbol.body.clone() {
-                        let loc = Value::Location(Location::Symbol(symbol.id, 0));
-                        let reg = self.alloc_get(ty.clone())?;
-                        let temp = self.alloc_get(TypeKind::Pointer(Box::new(ty)))?;
-                        self.emit_instruction(Command::Add(loc, Value::ARP, temp.clone()));
-                        self.emit_instruction(Command::Load(
-                            Value::Register(temp.clone()),
-                            reg.clone(),
-                        ));
-                        self.deallocate_register(temp.id);
-                        Some(reg)
-                    } else if let Definition::Function(func, id) = symbol.body.clone() {
-                        let loc = Value::Location(Location::Function(id));
-                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(func)))?;
-                        self.emit_instruction(Command::Move(loc, reg.clone()));
-                        Some(reg)
-                    } else if let Definition::Parameter(ty) = symbol.body.clone() {
-                        let loc = Value::Location(Location::Argument(symbol.name.clone()));
-                        let reg = self.alloc_get(ty)?;
-                        self.emit_instruction(Command::Load(loc, reg.clone()));
-                        Some(reg)
-                    } else {
-                        self.emitError(loc, &format!("No such symbol {}", symbol.name));
-                        None
-                    }
-                } else {
-                    self.emitError(loc, &format!("No such symbol {}", ident));
-                    None
-                }
+                let place = self.compile_place_expr(Expression::Identifier(ident), loc)?;
+                let reg = self.alloc_get(self.unwrap_ptr_ty(place.ty.clone())?)?;
+                self.emit_instruction(Command::Load(Value::Register(place), reg.clone()));
+                Some(reg)
             }
             Expression::Cast(ty, expr) => {
                 let out = self.alloc_get(ty)?;
@@ -685,78 +676,15 @@ impl IrGen {
                 self.deallocate_register(prev.id);
                 Some(out)
             }
-            Expression::AddressOf(ident) => {
-                let symbol = self.lookup_symbol(&ident);
-                if let Some(symbol) = symbol {
-                    if let Definition::Var(ty) = symbol.body.clone() {
-                        let loc = Value::Location(Location::Symbol(symbol.id, 0));
-                        let temp = self.alloc_get(TypeKind::Pointer(Box::new(ty.clone())))?;
-                        self.emit_instruction(Command::Add(loc, Value::ARP, temp.clone()));
-                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(ty)))?;
-                        self.emit_instruction(Command::Move(
-                            Value::Register(temp.clone()),
-                            reg.clone(),
-                        ));
-                        self.deallocate_register(temp.id);
-                        Some(reg)
-                    } else if let Definition::Function(ret, id) = symbol.body.clone() {
-                        let loc = Value::Location(Location::Function(id));
-                        let reg =
-                            self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Function(
-                                self.functions[id]
-                                    .parameters
-                                    .values()
-                                    .map(|param| param.clone())
-                                    .collect(),
-                                Box::new(ret),
-                            ))))?;
-                        self.emit_instruction(Command::Move(loc, reg.clone()));
-                        Some(reg)
-                    } else {
-                        self.emitError(loc, &format!("Invalid target for address of, {}", ident));
-                        None
-                    }
-                } else {
-                    self.emitError(loc, &format!("Invalid target for address of, {}", ident));
-                    None
-                }
+            Expression::AddressOf(expr) => {
+                let addr = self.compile_place_expr(*expr, loc);
+                addr
             }
             Expression::Subscript(array, index) => {
-                let arrayptr = self.compile_expression(*array, loc)?;
-                if let TypeKind::Pointer(array) = arrayptr.ty.clone() {
-                    if let TypeKind::Array(ty, count) = *array {
-                        let size = Value::Immediate(Immediate {
-                            value: self.size_of(*ty.clone(), loc)? as f64,
-                            ty: TypeKind::Int32,
-                        });
-                        let indexR = self.compile_expression(*index, loc)?;
-                        let index = self.convert_output_to_value(indexR.clone());
-                        let offset = self.alloc_get(TypeKind::Int32)?;
-                        self.emit_instruction(Command::Mul(index, size, offset.clone()));
-                        self.deallocate_register(indexR.id);
-                        let addr = self.alloc_get(TypeKind::Pointer(Box::new(*ty.clone())))?;
-                        self.emit_instruction(Command::Add(
-                            Value::Register(arrayptr.clone()),
-                            Value::Register(offset.clone()),
-                            addr.clone(),
-                        ));
-                        self.deallocate_register(offset.id);
-                        self.deallocate_register(arrayptr.id);
-                        let value = self.alloc_get(*ty)?;
-                        self.emit_instruction(Command::Load(
-                            Value::Register(addr.clone()),
-                            value.clone(),
-                        ));
-                        self.deallocate_register(addr.id);
-                        Some(value)
-                    } else {
-                        self.emitError(loc, "Type mismatch, expected array");
-                        None
-                    }
-                } else {
-                    self.emitError(loc, "Type mismatch, expected array");
-                    None
-                }
+                let place = self.compile_place_expr(Expression::Subscript(array, index), loc)?;
+                let out = self.alloc_get(self.unwrap_ptr_ty(place.ty.clone())?)?;
+                self.emit_instruction(Command::Load(Value::Register(place), out.clone()));
+                Some(out)
             }
             Expression::Match(match_expr) => {
                 let val = self.compile_expression(*match_expr.expr, loc)?;
@@ -809,10 +737,10 @@ impl IrGen {
                         _ => self.compile_statement(case.body),
                     }
                     let nb = self.current_block() + 1;
+                    self.pop_scope();
                     self.emit_instruction(Command::Jump(Location::None));
                     end_id.push(self.get_last_jump_id());
                     self.update_jump(jump, Command::JumpFalse(Location::Block(nb), pat));
-                    self.pop_scope();
                 }
                 self.new_block();
                 let current_loc = self.current_block();
@@ -1424,6 +1352,138 @@ impl IrGen {
         };
         return Some(reg);
     }
+    fn compile_assignment(
+        &mut self,
+        var: Expression,
+        assign: Expression,
+        loc: SourceLocation,
+    ) -> Option<Output> {
+        let place = Value::Register(self.compile_place_expr(var, loc)?);
+        let val = Value::Register(self.compile_expression(assign, loc)?);
+        self.emit_instruction(Command::Store(val, place));
+        None
+    }
+    fn unwrap_ptr_ty(&self, wrapped: TypeKind) -> Option<TypeKind> {
+        if let TypeKind::Pointer(ptr) = wrapped {
+            return Some(*ptr);
+        }
+        None
+    }
+
+    fn compile_place_expr(&mut self, expr: Expression, loc: SourceLocation) -> Option<Output> {
+        let r = match expr {
+            Expression::Subscript(expr, offset_expr) => {
+                let arrptr = self.compile_place_expr(*expr, loc)?;
+                if let Some(TypeKind::Array(arr_elm_ty, _)) = self.unwrap_ptr_ty(arrptr.ty.clone())
+                {
+                    let sizeof = self.size_of(*arr_elm_ty.clone(), loc)?;
+                    let offset = self.compile_expression(*offset_expr, loc)?;
+                    let reg = self.alloc_get(TypeKind::Pointer(Box::new(*arr_elm_ty.clone())))?;
+                    self.emit_instruction(Command::Mul(
+                        Value::Register(offset),
+                        Value::Immediate(Immediate {
+                            value: sizeof as f64,
+                            ty: TypeKind::Uint32,
+                        }),
+                        reg.clone(),
+                    ));
+                    self.emit_instruction(Command::Add(
+                        Value::Register(arrptr),
+                        Value::Register(reg.clone()),
+                        reg.clone(),
+                    ));
+                    return Some(reg);
+                } else {
+                    self.emitError(loc, "Expression isn't an array");
+                }
+                None
+            }
+            Expression::Binary(lhs, op, rhs) => match op {
+                BinaryOperator::PropertyAccess => {
+                    let addr = self.compile_place_expr(*lhs, loc)?;
+                    if let Some(TypeKind::Struct(name)) = self.unwrap_ptr_ty(addr.ty.clone()) {
+                        let sym = self.lookup_symbol(&name)?.clone();
+                        if let Definition::User(UserType::Struct(fields)) = sym.body {
+                            if let Expression::Identifier(prop) = *rhs {
+                                let fieldTy = fields.get(&prop).clone();
+                                if let Some(fieldTy) = fieldTy {
+                                    let offset = fields.keys().fold(0, |acc, k| {
+                                        acc + self.size_of(fields[k].clone(), loc).expect(
+                                            "INTERNAL ERROR: Failed to calculate size of type",
+                                        )
+                                    });
+                                    let reg = self
+                                        .alloc_get(TypeKind::Pointer(Box::new(fieldTy.clone())))?;
+                                    self.emit_instruction(Command::Add(
+                                        Value::Immediate(Immediate {
+                                            value: offset as f64,
+                                            ty: TypeKind::Int32,
+                                        }),
+                                        Value::Register(addr),
+                                        reg.clone(),
+                                    ));
+                                    return Some(reg);
+                                } else {
+                                    self.emitError(
+                                        loc,
+                                        &format!("No such property {} on struct {}", prop, name),
+                                    );
+                                }
+                            } else {
+                                self.emitError(loc, "Invalid property expression");
+                            }
+                        } else {
+                            self.emitError(loc, &format!("No such struct {}", name));
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            },
+            Expression::Identifier(ident) => {
+                let symbol = self.lookup_symbol(ident.as_str())?.clone();
+                match symbol.body {
+                    Definition::Function(ret, id) => {
+                        let loc = Value::Location(Location::Function(id));
+                        let reg =
+                            self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Function(
+                                self.functions[id]
+                                    .parameters
+                                    .values()
+                                    .map(|param| param.clone())
+                                    .collect(),
+                                Box::new(ret),
+                            ))))?;
+                        self.emit_instruction(Command::Move(loc, reg.clone()));
+                        Some(reg)
+                    }
+                    Definition::Var(ty) | Definition::Parameter(ty) => {
+                        let loc = Value::Location(Location::Symbol(symbol.id, 0));
+                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(ty.clone())))?;
+                        self.emit_instruction(Command::Add(loc, Value::ARP, reg.clone()));
+                        Some(reg)
+                    }
+                    _ => None,
+                }
+            }
+            Expression::Unary(op, rhs) => match op {
+                UnaryOperator::Deref => {
+                    let container = self.compile_expression(*rhs, loc)?;
+                    Some(container)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        return match r.is_some() {
+            true => r,
+            false => {
+                self.emitError(loc, "Invalid Place Expression");
+                None
+            }
+        };
+    }
+    fn compile_defer(&mut self, stmt: Statement) {}
     fn compile_declaration(&mut self, decl: Declaration, loc: SourceLocation) -> Option<Output> {
         self.define_var(decl.name.clone(), decl.ty);
         if decl.value.is_some() {

@@ -105,6 +105,8 @@ pub enum StatementKind {
     Union(UnionDeclaration),
     Import(ImportDeclaration),
     ImplictRet(Expression),
+    Assignment(Expression, Expression),
+    Defer(Box<Statement>),
     Break,
     Continue,
 }
@@ -147,7 +149,7 @@ pub enum Expression {
     Identifier(String),
     FunctionCall(Box<Expression>, Vec<Expression>),
     Cast(TypeKind, Box<Expression>),
-    AddressOf(String),
+    AddressOf(Box<Expression>),
     Subscript(Box<Expression>, Box<Expression>),
     Match(MatchExpression),
     Sizeof(TypeKind),
@@ -271,6 +273,7 @@ impl Parser {
             TokenKind::Keyword(KeywordKind::Break) => Some(self.parseBreakStatement()?),
             TokenKind::Keyword(KeywordKind::Continue) => Some(self.parseContinueStatement()?),
             TokenKind::Keyword(KeywordKind::Type) => Some(self.parseTypeDecl()?),
+            TokenKind::Keyword(KeywordKind::Defer) => Some(self.parseDefer()?),
             TokenKind::LeftBrace => Some(self.parseBlockStatement()?),
             _ => {
                 let loc = self.peek().loc.get_src_loc(&self.src);
@@ -288,21 +291,45 @@ impl Parser {
                     }
                     None
                 } else {
-                    if self.peek().kind == TokenKind::Semicolon {
-                        self.next();
-                        Some(Statement {
-                            kind: StatementKind::Expression(exp.unwrap()),
-                            loc,
-                        })
-                    } else {
-                        Some(Statement {
-                            kind: StatementKind::ImplictRet(exp.unwrap()),
-                            loc,
-                        })
-                    }
+                    self.parseExpressionStatement(exp.unwrap(), loc)
                 }
             }
         }
+    }
+    fn parseExpressionStatement(
+        &mut self,
+        lhs: Expression,
+        loc: SourceLocation,
+    ) -> Option<Statement> {
+        if self.peek().kind == TokenKind::Semicolon {
+            self.next();
+            Some(Statement {
+                kind: StatementKind::Expression(lhs),
+                loc,
+            })
+        } else if self.peek().kind == TokenKind::Operator(OperatorKind::Assign) {
+            self.next();
+            let expr = self.parseExpression()?;
+            self.matchToken(TokenKind::Semicolon)?;
+            Some(Statement {
+                kind: StatementKind::Assignment(lhs, expr),
+                loc,
+            })
+        } else {
+            Some(Statement {
+                kind: StatementKind::ImplictRet(lhs),
+                loc,
+            })
+        }
+    }
+    fn parseDefer(&mut self) -> Option<Statement> {
+        let src = &self.src.clone();
+        let loc = self.next().loc.get_src_loc(src);
+        let body = self.parseStatement()?;
+        Some(Statement {
+            kind: StatementKind::Defer(Box::new(body)),
+            loc,
+        })
     }
     fn parseMatch(&mut self) -> Option<Expression> {
         let expr = Box::new(self.parseExpression()?);
@@ -704,16 +731,7 @@ impl Parser {
                         OperatorKind::Negate => {
                             Expression::Unary(UnaryOperator::Neg, Box::new(rhs))
                         }
-                        OperatorKind::Ampersand => {
-                            if let Expression::Identifier(ident) = rhs {
-                                Expression::AddressOf(ident)
-                            } else {
-                                self.emitError(
-                                    "Address of operator can only be used with identifiers",
-                                );
-                                return None;
-                            }
-                        }
+                        OperatorKind::Ampersand => Expression::AddressOf(Box::new(rhs)),
                         OperatorKind::Asterisk => {
                             Expression::Unary(UnaryOperator::Deref, Box::new(rhs))
                         }

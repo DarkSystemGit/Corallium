@@ -51,10 +51,10 @@ pub fn run_cases() {
                 exe.build(0, &mut disk, true);
                 machine.set_disk(disk);
                 machine.debug = true;
-                machine.run();
                 for log in logs {
                     println!("{}", log);
                 }
+                machine.run();
             }
         }
         println!("Final State:");
@@ -65,6 +65,7 @@ pub fn run_cases() {
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
         comp_arithmentic(),
+        comp_loop(),
         TestCase::new("stack_case", TestType::Internal(stack_case)),
         gfx_case(),
         orig_case(),
@@ -83,6 +84,24 @@ fn comp_arithmentic() -> TestCase {
                     let x: i16=1+2+3;
                     let y: i16=4*5*6;
                     let z: i32=(y as i32)/(x as i32);
+                    return;
+                }
+                "#
+            .to_string(),
+        ),
+    )
+}
+fn comp_loop() -> TestCase {
+    TestCase::new(
+        "CompilerLoop",
+        TestType::Compiler(
+            r#"
+                fn main() -> void {
+                    let acc: i32=0;
+                    defer acc=acc+1;
+                    while (acc<(50 as i32)){
+                        acc=acc+(5 as i32);
+                    }
                     return;
                 }
                 "#

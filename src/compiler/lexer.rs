@@ -308,6 +308,7 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "continue" => Some(KeywordKind::Continue),
         "import" => Some(KeywordKind::Import),
         "type" => Some(KeywordKind::Type),
+        "defer" => Some(KeywordKind::Defer),
         _ => None,
     }
 }
@@ -467,6 +468,7 @@ pub enum KeywordKind {
     Continue,
     Import,
     Type,
+    Defer,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {

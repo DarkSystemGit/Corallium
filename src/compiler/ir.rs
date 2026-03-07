@@ -1483,7 +1483,9 @@ impl IrGen {
             }
         };
     }
-    fn compile_defer(&mut self, stmt: Statement) {}
+    fn compile_defer(&mut self, stmt: Statement) {
+        self.defer_stack.last_mut().unwrap().push(stmt);
+    }
     fn compile_declaration(&mut self, decl: Declaration, loc: SourceLocation) -> Option<Output> {
         self.define_var(decl.name.clone(), decl.ty);
         if decl.value.is_some() {
@@ -1505,6 +1507,9 @@ impl IrGen {
         None
     }
     fn compile_return(&mut self, stmt: ReturnStatement, loc: SourceLocation) -> Option<Output> {
+        for dstmt in self.defer_stack.pop().unwrap_or_default() {
+            self.compile_statement(dstmt);
+        }
         if let Some(expr) = stmt.value {
             let output = self.compile_expression(expr, loc)?;
             let value = self.convert_output_to_value(output.clone());

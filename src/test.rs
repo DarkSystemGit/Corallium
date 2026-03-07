@@ -98,7 +98,7 @@ fn comp_loop() -> TestCase {
             r#"
                 fn main() -> void {
                     let acc: i32=0;
-                    defer acc=acc+1;
+                    defer acc=acc+(1 as i32);
                     while (acc<(50 as i32)){
                         acc=acc+(5 as i32);
                     }

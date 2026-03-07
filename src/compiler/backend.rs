@@ -221,7 +221,6 @@ impl Backend {
     fn touch_reg(&mut self, reg: PhysReg) {
         self.time_step += 1;
         self.register_lru.insert(reg, self.time_step);
-        // Update aliases so we don't evict half of a recently used register
         match reg {
             PhysReg::EX1 => {
                 self.register_lru.insert(PhysReg::R2, self.time_step);
@@ -311,7 +310,11 @@ impl Backend {
         let func_idx = self.loc.0;
         if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).cloned()
         {
-            self.functions[func_idx].phys_owners.remove(&p);
+            if let Some(owner) = self.functions[func_idx].phys_owners.get(&p) {
+                if *owner == virt_id {
+                    self.functions[func_idx].phys_owners.remove(&p);
+                }
+            }
             self.functions[func_idx].dirty_regs.remove(&p);
             self.functions[func_idx].virt_locs.remove(&virt_id);
         }
@@ -324,9 +327,41 @@ impl Backend {
         }
         inst
     }
+
+    fn resolve_keep(&mut self, val: &Value) -> Inst {
+        self.resolve_operand(val)
+    }
+
+    fn free_op(&mut self, val: &Value) {
+        if let Value::Register(r) = val {
+            self.decrement_usage(r.id as usize);
+        }
+    }
+
     fn log(&mut self, msg: String) {
         self.logs.push(msg);
     }
+
+    fn validate_operand(&mut self, inst: Inst, source_val: &Value) -> Inst {
+        if let Inst::PhysReg(reg) = inst {
+            if let Value::Register(virt) = source_val {
+                let func_idx = self.loc.0;
+                let current_loc = self.functions[func_idx].virt_locs.get(&(virt.id as usize));
+
+                match current_loc {
+                    Some(RegLoc::Stack(_)) => return self.resolve_operand(source_val),
+                    Some(RegLoc::Physical(p)) => {
+                        if *p != reg {
+                            return Inst::PhysReg(*p);
+                        }
+                    }
+                    _ => return self.resolve_operand(source_val),
+                }
+            }
+        }
+        inst
+    }
+
     fn process_command(&mut self, cmd: &Command) {
         self.log(format!("Processing Command: {:?}", cmd));
         let l = self.functions[self.loc.0].blocks[self.loc.1].len();
@@ -344,45 +379,59 @@ impl Backend {
             Command::Shr(a, b, c) => self.emit_logic(LogicOp::Shr, a, b, c),
 
             Command::Not(a, out) => {
-                let op_a = self.resolve_and_free(a);
+                let op_a = self.resolve_keep(a);
                 let ty = self.get_cmd_type(&out.ty);
                 let target = match ty {
                     CommandType::I32 | CommandType::U32 => PhysReg::EX1,
                     _ => PhysReg::R1,
                 };
-                // Ensure target is free, spill if necessary
                 if !self.is_reg_free(target) {
                     self.spill(target);
                 }
+                let valid_a = self.validate_operand(op_a, a);
                 self.claim_reg(target, out.id as usize);
-                // VM Logic ops write implicitly to R1/EX1
                 self.emit(Inst::OpCode(OpCode::Logic(LogicOp::Not, ty)));
-                self.emit(op_a);
+                self.emit(valid_a);
+                self.free_op(a);
             }
             Command::Move(val, out) => {
-                let src = self.resolve_and_free(val);
+                let src = self.resolve_keep(val);
                 let dest = self.allocate_output(out);
                 let ty = self.get_cmd_type(&out.ty);
+                let valid_src = self.validate_operand(src, val);
+
                 self.emit(Inst::OpCode(OpCode::Move(ty)));
-                self.emit(src);
+                self.emit(valid_src);
                 self.emit(Inst::PhysReg(dest));
+                self.free_op(val);
             }
             Command::Load(ptr, dest) => {
-                let p_ptr = self.resolve_and_free(ptr);
+                let p_ptr = self.resolve_keep(ptr);
                 let p_dest = self.allocate_output(dest);
+                let valid_ptr = self.validate_operand(p_ptr, ptr);
                 let ty = self.get_cmd_type(&dest.ty);
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, ty)));
-                self.emit(p_ptr);
+                self.emit(valid_ptr);
                 self.emit(Inst::PhysReg(p_dest));
+                self.free_op(ptr);
             }
             Command::Store(val, ptr) => {
                 let val_ty = self.get_val_ty(val);
                 let ty = self.get_cmd_type(&val_ty);
-                let v_op = self.resolve_and_free(val);
-                let p_op = self.resolve_and_free(ptr);
+
+                let v_op = self.resolve_keep(val);
+                // ensure_reg() uses EX1 scratch. If v_op in EX1, EX1 protection must run.
+                let p_op = self.resolve_keep(ptr);
+
+                let valid_v = self.validate_operand(v_op, val);
+                let valid_p = self.validate_operand(p_op, ptr);
+
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
-                self.emit(p_op);
-                self.emit(v_op);
+                self.emit(valid_p); // Address
+                self.emit(valid_v); // Value
+
+                self.free_op(val);
+                self.free_op(ptr);
             }
             Command::Jump(loc) => {
                 self.flush_registers();
@@ -404,6 +453,7 @@ impl Backend {
                 self.emit(op_c);
             }
             Command::Call(loc, _) => {
+                self.flush_registers();
                 let loc_op = self.resolve_and_free(loc);
                 self.emit(Inst::OpCode(OpCode::Call));
                 self.emit(loc_op);
@@ -463,7 +513,6 @@ impl Backend {
         self.functions[self.loc.0].blocks[self.loc.1].push(inst);
     }
 
-    // Helper to detect if an operand was clobbered by a spill and reload it if necessary
     fn check_and_reload(
         &mut self,
         operand: Inst,
@@ -471,7 +520,6 @@ impl Backend {
         spilled_reg: PhysReg,
     ) -> Inst {
         if let Inst::PhysReg(r) = operand {
-            // If operand was in the spilled register (or an alias), it's now invalid.
             if r == spilled_reg || (self.is_ex1_alias(spilled_reg) && self.is_ex1_alias(r)) {
                 return self.resolve_operand(original_val);
             }
@@ -480,8 +528,8 @@ impl Backend {
     }
 
     fn emit_math(&mut self, op: ArithmeticOp, a: &Value, b: &Value, c: &Output) {
-        let mut op_a = self.resolve_and_free(a);
-        let mut op_b = self.resolve_and_free(b);
+        let op_a = self.resolve_keep(a);
+        let op_b = self.resolve_keep(b);
         let ty = self.get_cmd_type(&c.ty);
 
         let hardcoded_dest = match ty {
@@ -490,24 +538,27 @@ impl Backend {
             CommandType::I32 | CommandType::U32 => PhysReg::EX1,
         };
 
-        // If destination is busy, spill it.
         if !self.is_reg_free(hardcoded_dest) {
             self.spill(hardcoded_dest);
-            op_a = self.check_and_reload(op_a, a, hardcoded_dest);
-            op_b = self.check_and_reload(op_b, b, hardcoded_dest);
         }
+
+        let valid_a = self.validate_operand(op_a, a);
+        let valid_b = self.validate_operand(op_b, b);
 
         self.claim_reg(hardcoded_dest, c.id as usize);
         self.functions[self.loc.0].dirty_regs.insert(hardcoded_dest);
 
         self.emit(Inst::OpCode(OpCode::Arithmetic(op, ty)));
-        self.emit(op_a);
-        self.emit(op_b);
+        self.emit(valid_a);
+        self.emit(valid_b);
+
+        self.free_op(a);
+        self.free_op(b);
     }
 
     fn emit_logic(&mut self, op: LogicOp, a: &Value, b: &Value, c: &Output) {
-        let mut op_a = self.resolve_and_free(a);
-        let mut op_b = self.resolve_and_free(b);
+        let op_a = self.resolve_keep(a);
+        let op_b = self.resolve_keep(b);
         let ty = self.get_cmd_type(&c.ty);
 
         let hardcoded_dest = match ty {
@@ -517,32 +568,42 @@ impl Backend {
 
         if !self.is_reg_free(hardcoded_dest) {
             self.spill(hardcoded_dest);
-            op_a = self.check_and_reload(op_a, a, hardcoded_dest);
-            op_b = self.check_and_reload(op_b, b, hardcoded_dest);
         }
+
+        let valid_a = self.validate_operand(op_a, a);
+        let valid_b = self.validate_operand(op_b, b);
+
         self.claim_reg(hardcoded_dest, c.id as usize);
         self.functions[self.loc.0].dirty_regs.insert(hardcoded_dest);
 
         self.emit(Inst::OpCode(OpCode::Logic(op, ty)));
-        self.emit(op_a);
-        self.emit(op_b);
+        self.emit(valid_a);
+        self.emit(valid_b);
+
+        self.free_op(a);
+        self.free_op(b);
     }
 
     fn emit_cmp(&mut self, op_code: OpCode, a: &Value, b: &Value, c: &Output) {
-        let mut op_a = self.resolve_and_free(a);
-        let mut op_b = self.resolve_and_free(b);
-        // Comparisons usually output 0 or 1 to R1
+        let op_a = self.resolve_keep(a);
+        let op_b = self.resolve_keep(b);
+
         if !self.is_reg_free(PhysReg::R1) {
             self.spill(PhysReg::R1);
-            op_a = self.check_and_reload(op_a, a, PhysReg::R1);
-            op_b = self.check_and_reload(op_b, b, PhysReg::R1);
         }
+
+        let valid_a = self.validate_operand(op_a, a);
+        let valid_b = self.validate_operand(op_b, b);
+
         self.claim_reg(PhysReg::R1, c.id as usize);
         self.functions[self.loc.0].dirty_regs.insert(PhysReg::R1);
 
         self.emit(Inst::OpCode(op_code));
-        self.emit(op_a);
-        self.emit(op_b);
+        self.emit(valid_a);
+        self.emit(valid_b);
+
+        self.free_op(a);
+        self.free_op(b);
     }
 
     fn resolve_operand(&mut self, val: &Value) -> Inst {
@@ -591,17 +652,18 @@ impl Backend {
                     virt_id, offset, phys
                 ));
                 let cmd_ty = self.get_cmd_type(&ty);
-                let owners: Vec<PhysReg> = self.functions[func_idx]
-                    .phys_owners
-                    .keys()
-                    .cloned()
-                    .collect();
-                for r in owners {
-                    if self.is_ex1_alias(r) && r != phys {
-                        self.spill(r);
-                    }
+
+                // IMPORTANT: Removed redundant "spill aliases" loop here.
+                // allocate_reg has already guaranteed 'phys' is free to use.
+                // We only need to check EX1 for scratchpad safety.
+
+                let ex1_busy = !self.is_reg_free(PhysReg::EX1) && phys != PhysReg::EX1;
+
+                if ex1_busy {
+                    self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
+                    self.emit(Inst::PhysReg(PhysReg::EX1));
                 }
-                // Address Calculation: EX1 = ARP + offset
+
                 self.emit(Inst::OpCode(OpCode::Arithmetic(
                     ArithmeticOp::Add,
                     CommandType::I32,
@@ -615,10 +677,14 @@ impl Backend {
                 self.emit(Inst::PhysReg(PhysReg::EX1));
                 self.emit(Inst::SymbolSecLen);
 
-                // Load *EX1 -> phys
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, cmd_ty)));
-                self.emit(Inst::PhysReg(PhysReg::EX1)); // Address is in EX1
-                self.emit(Inst::PhysReg(phys)); // Dest
+                self.emit(Inst::PhysReg(PhysReg::EX1));
+                self.emit(Inst::PhysReg(phys));
+
+                if ex1_busy {
+                    self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
+                    self.emit(Inst::PhysReg(PhysReg::EX1));
+                }
 
                 self.functions[func_idx].dirty_regs.remove(&phys);
             }
@@ -650,7 +716,7 @@ impl Backend {
                 return reg;
             }
         }
-        // LRU Eviction: pick lowest timestamp
+
         let victim = *candidates
             .iter()
             .min_by_key(|r| self.register_lru.get(r).unwrap_or(&0))
@@ -679,7 +745,6 @@ impl Backend {
     }
 
     fn spill(&mut self, reg: PhysReg) {
-        //values spilled arent restored(virt12,virt18)
         let func_idx = self.loc.0;
         let owner_opt = self.functions[func_idx].phys_owners.get(&reg).cloned();
 
@@ -698,7 +763,6 @@ impl Backend {
             if is_dirty {
                 let ty = self.type_of_phys_reg(reg);
                 if self.is_ex1_alias(reg) {
-                    let ty = self.type_of_phys_reg(reg);
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
                     self.emit(Inst::PhysReg(PhysReg::EX2));
                     self.emit(Inst::OpCode(OpCode::Move(ty)));
@@ -728,15 +792,10 @@ impl Backend {
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
                     self.emit(Inst::PhysReg(PhysReg::EX2));
                 } else {
-                    let owners: Vec<PhysReg> = self.functions[func_idx]
-                        .phys_owners
-                        .keys()
-                        .cloned()
-                        .collect();
-                    for r in owners {
-                        if self.is_ex1_alias(r) {
-                            self.spill(r);
-                        }
+                    let ex1_busy = !self.is_reg_free(PhysReg::EX1);
+                    if ex1_busy {
+                        self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
+                        self.emit(Inst::PhysReg(PhysReg::EX1));
                     }
 
                     self.emit(Inst::OpCode(OpCode::Arithmetic(
@@ -754,6 +813,11 @@ impl Backend {
                     self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
                     self.emit(Inst::PhysReg(PhysReg::EX1));
                     self.emit(Inst::PhysReg(reg));
+
+                    if ex1_busy {
+                        self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
+                        self.emit(Inst::PhysReg(PhysReg::EX1));
+                    }
                 }
             }
             self.log(format!(
@@ -765,6 +829,19 @@ impl Backend {
                 .insert(owner_id, RegLoc::Stack(offset));
             self.functions[func_idx].phys_owners.remove(&reg);
             self.functions[func_idx].dirty_regs.remove(&reg);
+        } else {
+            // Recursive spill for aliases only
+            if reg == PhysReg::EX1 {
+                self.spill(PhysReg::R2);
+                self.spill(PhysReg::R3);
+            } else if reg == PhysReg::EX2 {
+                self.spill(PhysReg::R4);
+                self.spill(PhysReg::R5);
+            } else if reg == PhysReg::R2 || reg == PhysReg::R3 {
+                self.spill(PhysReg::EX1);
+            } else if reg == PhysReg::R4 || reg == PhysReg::R5 {
+                self.spill(PhysReg::EX2);
+            }
         }
     }
 

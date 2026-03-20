@@ -64,6 +64,7 @@ pub fn run_cases() {
 }
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
+        comp_func(),
         comp_arithmentic(),
         comp_loop(),
         TestCase::new("stack_case", TestType::Internal(stack_case)),
@@ -75,6 +76,12 @@ fn get_cases() -> Vec<TestCase> {
         .filter(|x| input!("Run case {} [y/n]:", x.name) == "y")
         .collect()
 }
+//working features
+// var creation&assign
+// arithmetic&casting
+// loops
+// defer
+// calls&args
 fn comp_arithmentic() -> TestCase {
     TestCase::new(
         "CompilerArithmetic",
@@ -100,10 +107,39 @@ fn comp_loop() -> TestCase {
                     let acc: i32=0;
                     defer acc=acc+(1 as i32);
                     while (acc<(50 as i32)){
-                        acc=acc+(5 as i32);
+                        defer acc=acc+add;
+                        let add: i32=(5 as i32);
                     }
                     return;
                 }
+                "#
+            .to_string(),
+        ),
+    )
+}
+fn comp_func() -> TestCase {
+    TestCase::new(
+        "CompilerFunc",
+        TestType::Compiler(
+            r#"
+                fn forloop(start: i32)->i32{
+                let acc: i32=start;
+                defer acc=acc+(1 as i32);
+                while (acc<(50 as i32)){
+                    defer acc=acc+add;
+                    let add: i32=(5 as i32);
+                }
+                return acc;
+                }
+                fn main() -> void {
+                    let c:i32=0;
+                    for (let i: i16=0;i<10;i=i+1){
+                        c=c+forloop(i as i32);
+                    }
+                    c;
+                    return;
+                }
+
                 "#
             .to_string(),
         ),

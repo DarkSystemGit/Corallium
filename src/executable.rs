@@ -561,22 +561,7 @@ impl Fn {
                         Command(c) => match c {
                             _ => vec![pack_command(*c)],
                         },
-                        SymbolSectionLen() => pack_i32(
-                            (self.symbol_table.len()
-                                - (match self.symbol_table.symbols.iter().find(|x| {
-                                    x.name
-                                        == "__internal_reg_save_463653961935601537679876958223"
-                                            .to_string()
-                                }) {
-                                    None => 0,
-                                    Some(_) => {
-                                        self.symbol_table.symbols[self.symbol_table.get_symbol(
-                                            "__internal_reg_save_463653961935601537679876958223",
-                                        )]
-                                        .size
-                                    }
-                                })) as i32,
-                        ),
+                        SymbolSectionLen() => pack_i32(self.symbol_table.len() as i32),
                         Register(r) => pack_register(*r),
                         Float(f) => pack_float(*f),
                         Int(i) => vec![*i],

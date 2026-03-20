@@ -105,7 +105,6 @@ pub enum StatementKind {
     Union(UnionDeclaration),
     Import(ImportDeclaration),
     ImplictRet(Expression),
-    Assignment(Expression, Expression),
     Defer(Box<Statement>),
     Break,
     Continue,
@@ -171,7 +170,7 @@ pub enum UnaryOperator {
     Neg,
     Deref,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -190,6 +189,7 @@ pub enum BinaryOperator {
     Shl,
     Shr,
     PropertyAccess,
+    Assign,
 }
 #[derive(Debug, Clone)]
 pub struct IfStatement {
@@ -204,7 +204,7 @@ pub struct WhileStatement {
 }
 #[derive(Debug, Clone)]
 pub struct ForStatement {
-    pub init: Option<Expression>,
+    pub init: Option<Box<Statement>>,
     pub condition: Option<Expression>,
     pub increment: Option<Expression>,
     pub body: Box<Statement>,
@@ -305,14 +305,6 @@ impl Parser {
             self.next();
             Some(Statement {
                 kind: StatementKind::Expression(lhs),
-                loc,
-            })
-        } else if self.peek().kind == TokenKind::Operator(OperatorKind::Assign) {
-            self.next();
-            let expr = self.parseExpression()?;
-            self.matchToken(TokenKind::Semicolon)?;
-            Some(Statement {
-                kind: StatementKind::Assignment(lhs, expr),
                 loc,
             })
         } else {
@@ -593,9 +585,8 @@ impl Parser {
         self.matchToken(TokenKind::LeftParen)?;
         let init = match self.peek().kind {
             TokenKind::Semicolon => None,
-            _ => Some(self.parseExpression()?),
+            _ => Some(Box::new(self.parseStatement()?)),
         };
-        self.matchToken(TokenKind::Semicolon)?;
         let condition = match self.peek().kind {
             TokenKind::Semicolon => None,
             _ => Some(self.parseExpression()?),
@@ -786,6 +777,7 @@ impl Parser {
                         OperatorKind::Shl => BinaryOperator::Shl,
                         OperatorKind::Shr => BinaryOperator::Shr,
                         OperatorKind::Dot => BinaryOperator::PropertyAccess,
+                        OperatorKind::Assign => BinaryOperator::Assign,
                         _ => return None,
                     };
                     Expression::Binary(Box::new(lhs), bin_op, Box::new(rhs))
@@ -836,6 +828,7 @@ impl Parser {
                 | OperatorKind::Gt
                 | OperatorKind::Lte
                 | OperatorKind::Gte => Some((20, 21)),
+                OperatorKind::Assign => Some((10, 9)),
                 _ => None,
             },
             _ => None,

@@ -96,7 +96,8 @@ pub struct Function {
     current_block: usize,
     loop_stack: Vec<[usize; 2]>,
     loop_patches: HashMap<usize, Vec<usize>>,
-
+    next_id: usize,
+    next_param_id: usize,
     pub symbols: Vec<Symbol>,
 }
 #[derive(Debug)]
@@ -108,7 +109,6 @@ pub struct IrGen {
     current_fn: usize,
     emit: bool,
     scopes: Vec<Vec<Symbol>>,
-    next_id: usize,
     next_fn_id: usize,
     pub registers: Vec<Register>,
     next_reg: u16,
@@ -128,6 +128,8 @@ impl IrGen {
                 loop_stack: Vec::new(),
                 loop_patches: HashMap::new(),
                 symbols: Vec::new(),
+                next_id: 0,
+                next_param_id: 0,
             }],
             defer_stack: Vec::new(),
             imports: Vec::new(),
@@ -135,11 +137,20 @@ impl IrGen {
             current_fn: 0,
             emit: true,
             scopes: vec![Vec::new()],
-            next_id: 0,
             next_fn_id: 1,
             registers: Vec::new(),
             next_reg: 0,
         }
+    }
+    fn get_next_symbol_id(&mut self) -> usize {
+        let r = self.functions[self.current_fn].next_id.clone();
+        self.functions[self.current_fn].next_id += 1;
+        r
+    }
+    fn get_next_param_symbol_id(&mut self) -> usize {
+        let r = self.functions[self.current_fn].next_param_id.clone();
+        self.functions[self.current_fn].next_param_id += 1;
+        r
     }
     fn get_loc(&self) -> [usize; 3] {
         [
@@ -194,54 +205,43 @@ impl IrGen {
         let symbol = Symbol {
             name,
             body: Definition::Var(ty.clone()),
-            id: self.next_id,
+            id: self.get_next_symbol_id(),
             size: self.size_of(ty, SourceLocation { line: 0, col: 0 }),
         };
         self.functions[self.current_fn].symbols.push(symbol.clone());
-        self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
     }
     fn define_user_type(&mut self, name: String, ty: UserType) {
         let symbol = Symbol {
             name,
             body: Definition::User(ty),
-            id: self.next_id,
+            id: 0,
             size: None,
         };
-        self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
     }
     fn define_function(&mut self, name: String, functy: TypeKind, id: usize) {
         let symbol = Symbol {
             name,
             body: Definition::Function(functy, id),
-            id: self.next_id,
+            id: 0,
             size: None,
         };
-        self.next_id += 1;
         self.scopes.last_mut().unwrap().push(symbol);
     }
     fn define_parameter(&mut self, name: String, ty: TypeKind) {
         let symbol = Symbol {
             name,
             body: Definition::Parameter(ty.clone()),
-            id: self.next_id,
+            id: self.get_next_param_symbol_id(),
             size: self.size_of(ty, SourceLocation { line: 0, col: 0 }),
         };
-        self.next_id += 1;
+        self.functions[self.current_fn].symbols.push(symbol.clone());
         self.scopes.last_mut().unwrap().push(symbol);
     }
     fn lookup_symbol(&self, name: &str) -> Option<&Symbol> {
         for scope in self.scopes.iter().rev() {
             if let Some(symbol) = scope.iter().find(|s| s.name == name) {
-                return Some(symbol);
-            }
-        }
-        None
-    }
-    fn get_symbol(&self, id: usize) -> Option<&Symbol> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(symbol) = scope.iter().find(|s| s.id == id) {
                 return Some(symbol);
             }
         }
@@ -264,7 +264,6 @@ impl IrGen {
     }
 
     fn compile_statement(&mut self, statement: Statement) {
-        //println!("Compiling statement: {}", statement.kind);
         match statement.kind {
             StatementKind::Expression(expr) => {
                 self.compile_expression(expr, statement.loc);
@@ -314,9 +313,6 @@ impl IrGen {
             StatementKind::Union(decl) => {
                 self.compile_union(decl, statement.loc);
             }
-            StatementKind::Assignment(var, assign) => {
-                self.compile_assignment(var, assign, statement.loc);
-            }
             StatementKind::Defer(stmt) => {
                 self.compile_defer(*stmt);
             }
@@ -344,9 +340,6 @@ impl IrGen {
         self.next_fn_id += 1;
         self.current_fn = self.next_fn_id - 1;
         self.push_scope();
-        for (name, ty) in func.params.iter() {
-            self.define_parameter(name.clone(), ty.clone());
-        }
         self.functions.push(Function {
             name: func.name.clone(),
             parameters: func.params.clone(),
@@ -356,7 +349,12 @@ impl IrGen {
             loop_stack: vec![],
             loop_patches: HashMap::new(),
             symbols: Vec::new(),
+            next_id: 0,
+            next_param_id: 0,
         });
+        for (name, ty) in func.params.iter() {
+            self.define_parameter(name.clone(), ty.clone());
+        }
         self.compile_statement(*func.body);
         self.current_fn = curr_fn;
         self.pop_scope();
@@ -376,7 +374,7 @@ impl IrGen {
                 Some(out)
             }
             Expression::Binary(left, op, right) => {
-                if let BinaryOperator::PropertyAccess = op {
+                if BinaryOperator::PropertyAccess == op {
                     let obj = self.compile_expression(*left, loc.clone())?;
                     if let TypeKind::Pointer(ptr) = obj.ty.clone() {
                         if let TypeKind::Struct(strct) = *ptr {
@@ -385,11 +383,16 @@ impl IrGen {
                                 if let Expression::Identifier(property) = *right {
                                     let fieldTy = utype.get(&property);
                                     if let Some(fieldTy) = fieldTy {
-                                        let offset = utype.keys().fold(0, |acc, k| {
-                                            acc + self.size_of(utype[k].clone(), loc).expect(
-                                                "INTERNAL ERROR: Failed to calculate size of type",
-                                            )
-                                        });
+                                        // FIX: only sum fields that come before `property`,
+                                        // not all fields (which would give total struct size).
+                                        let offset = utype
+                                            .keys()
+                                            .take_while(|k| *k != &property)
+                                            .fold(0, |acc, k| {
+                                                acc + self.size_of(utype[k].clone(), loc).expect(
+                                                    "INTERNAL ERROR: Failed to calculate size of type",
+                                                )
+                                            });
                                         let temp = self.alloc_get(TypeKind::Int32)?;
                                         let reg = self.alloc_get(fieldTy.clone())?;
                                         self.emit_instruction(Command::Add(
@@ -440,6 +443,8 @@ impl IrGen {
                         self.emitError(loc, "Cannot access property of non-struct type");
                     }
                     None
+                } else if BinaryOperator::Assign == op {
+                    self.compile_assignment(*left, *right, loc)
                 } else {
                     let outL = self.compile_expression(*left.clone(), loc)?;
                     let outR = self.compile_expression(*right.clone(), loc)?;
@@ -665,6 +670,9 @@ impl IrGen {
             Expression::Literal(lit) => self.compile_literal(lit, loc),
             Expression::Identifier(ident) => {
                 let place = self.compile_place_expr(Expression::Identifier(ident), loc)?;
+                if let TypeKind::Function(_, _) = self.unwrap_ptr_ty(place.ty.clone())? {
+                    return Some(place);
+                }
                 let reg = self.alloc_get(self.unwrap_ptr_ty(place.ty.clone())?)?;
                 self.emit_instruction(Command::Load(Value::Register(place), reg.clone()));
                 Some(reg)
@@ -821,9 +829,10 @@ impl IrGen {
                             Value::ARP,
                             temp.clone(),
                         ));
+                        // FIX: Store(val, ptr) — value first, pointer second.
                         self.emit_instruction(Command::Store(
-                            Value::Register(temp.clone()),
                             Value::Register(reg.clone()),
+                            Value::Register(temp.clone()),
                         ));
                         self.deallocate_register(reg.id);
                         self.deallocate_register(temp.id);
@@ -866,12 +875,13 @@ impl IrGen {
                         Value::Location(Location::Symbol(symbol.id, i)),
                         temp.clone(),
                     ));
+                    // FIX: Store(val, ptr) — immediate value first, pointer second.
                     self.emit_instruction(Command::Store(
-                        Value::Register(temp.clone()),
                         Value::Immediate(Immediate {
                             value: c as u8 as f64,
                             ty: TypeKind::Char,
                         }),
+                        Value::Register(temp.clone()),
                     ));
                     self.deallocate_register(temp.id);
                 }
@@ -881,12 +891,13 @@ impl IrGen {
                     Value::Location(Location::Symbol(symbol.id, str.len())),
                     temp.clone(),
                 ));
+                // FIX: Store(val, ptr) — null terminator first, pointer second.
                 self.emit_instruction(Command::Store(
-                    Value::Register(temp.clone()),
                     Value::Immediate(Immediate {
                         value: 0.0,
                         ty: TypeKind::Char,
                     }),
+                    Value::Register(temp.clone()),
                 ));
                 self.deallocate_register(temp.id);
                 let out = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Array(
@@ -925,9 +936,10 @@ impl IrGen {
                                         Value::ARP,
                                         temp.clone(),
                                     ));
+                                    // FIX: Store(val, ptr) — field value first, pointer second.
                                     self.emit_instruction(Command::Store(
-                                        Value::Register(temp.clone()),
                                         Value::Register(expr.clone()),
+                                        Value::Register(temp.clone()),
                                     ));
                                     self.deallocate_register(expr.id);
                                     self.deallocate_register(temp.id);
@@ -987,21 +999,23 @@ impl IrGen {
                                 Value::ARP,
                                 temp.clone(),
                             ));
+                            // FIX: Store(val, ptr) — tag value first, pointer second.
                             self.emit_instruction(Command::Store(
-                                Value::Register(temp.clone()),
                                 Value::Immediate(Immediate {
                                     value: def.keys().position(|x| *x == variant)? as f64,
                                     ty: TypeKind::Uint16,
                                 }),
+                                Value::Register(temp.clone()),
                             ));
                             self.emit_instruction(Command::Add(
                                 Value::Location(Location::Symbol(symbol.id, 1)),
                                 Value::ARP,
                                 temp.clone(),
                             ));
+                            // FIX: Store(val, ptr) — union payload first, pointer second.
                             self.emit_instruction(Command::Store(
-                                Value::Register(temp.clone()),
                                 Value::Register(expr.clone()),
+                                Value::Register(temp.clone()),
                             ));
                             self.deallocate_register(expr.id);
                             self.deallocate_register(temp.id);
@@ -1156,9 +1170,10 @@ impl IrGen {
                     Value::ARP,
                     temp.clone(),
                 ));
+                // FIX: Store(val, ptr) — matched value first, pointer second.
                 self.emit_instruction(Command::Store(
-                    Value::Register(temp.clone()),
                     Value::Register(val.clone()),
+                    Value::Register(temp.clone()),
                 ));
                 self.deallocate_register(temp.id);
                 self.emit_instruction(true_move);
@@ -1359,9 +1374,9 @@ impl IrGen {
         loc: SourceLocation,
     ) -> Option<Output> {
         let place = Value::Register(self.compile_place_expr(var, loc)?);
-        let val = Value::Register(self.compile_expression(assign, loc)?);
-        self.emit_instruction(Command::Store(val, place));
-        None
+        let val = self.compile_expression(assign, loc)?;
+        self.emit_instruction(Command::Store(Value::Register(val.clone()), place));
+        Some(val)
     }
     fn unwrap_ptr_ty(&self, wrapped: TypeKind) -> Option<TypeKind> {
         if let TypeKind::Pointer(ptr) = wrapped {
@@ -1407,11 +1422,16 @@ impl IrGen {
                             if let Expression::Identifier(prop) = *rhs {
                                 let fieldTy = fields.get(&prop).clone();
                                 if let Some(fieldTy) = fieldTy {
-                                    let offset = fields.keys().fold(0, |acc, k| {
-                                        acc + self.size_of(fields[k].clone(), loc).expect(
-                                            "INTERNAL ERROR: Failed to calculate size of type",
-                                        )
-                                    });
+                                    // FIX: only sum fields that come before `prop`,
+                                    // not all fields (which would give total struct size).
+                                    let offset = fields.keys().take_while(|k| *k != &prop).fold(
+                                        0,
+                                        |acc, k| {
+                                            acc + self.size_of(fields[k].clone(), loc).expect(
+                                                "INTERNAL ERROR: Failed to calculate size of type",
+                                            )
+                                        },
+                                    );
                                     let reg = self
                                         .alloc_get(TypeKind::Pointer(Box::new(fieldTy.clone())))?;
                                     self.emit_instruction(Command::Add(
@@ -1442,23 +1462,19 @@ impl IrGen {
             },
             Expression::Identifier(ident) => {
                 let symbol = self.lookup_symbol(ident.as_str())?.clone();
-                match symbol.body {
-                    Definition::Function(ret, id) => {
+                match symbol.body.clone() {
+                    Definition::Function(ty, id) => {
                         let loc = Value::Location(Location::Function(id));
-                        let reg =
-                            self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Function(
-                                self.functions[id]
-                                    .parameters
-                                    .values()
-                                    .map(|param| param.clone())
-                                    .collect(),
-                                Box::new(ret),
-                            ))))?;
+                        let reg = self.alloc_get(TypeKind::Pointer(Box::new(ty)))?;
                         self.emit_instruction(Command::Move(loc, reg.clone()));
                         Some(reg)
                     }
                     Definition::Var(ty) | Definition::Parameter(ty) => {
-                        let loc = Value::Location(Location::Symbol(symbol.id, 0));
+                        let loc = Value::Location(match symbol.body {
+                            Definition::Var(_) => Location::Symbol(symbol.id, 0),
+                            Definition::Parameter(_) => Location::Argument(symbol.name),
+                            _ => unreachable!(),
+                        });
                         let reg = self.alloc_get(TypeKind::Pointer(Box::new(ty.clone())))?;
                         self.emit_instruction(Command::Add(loc, Value::ARP, reg.clone()));
                         Some(reg)
@@ -1547,7 +1563,7 @@ impl IrGen {
     }
     fn compile_for(&mut self, stmt: ForStatement, loc: SourceLocation) {
         if let Some(init) = stmt.init {
-            self.compile_expression(init, loc.clone());
+            self.compile_statement(*init);
         }
         let body_statement = self
             .convert_stmt_to_block(*stmt.body.clone(), loc.clone())
@@ -1585,14 +1601,20 @@ impl IrGen {
     fn compile_while(&mut self, stmt: WhileStatement, loc: SourceLocation) -> Option<Output> {
         let condition_block = self.new_block();
         let condition = self.compile_expression(stmt.condition, loc)?;
-        let body_block = self.new_block();
-        self.add_loop(condition_block, body_block);
+
+        // FIX: emit JumpFalse HERE, while still in condition_block, before creating
+        // the body block.  The original code called new_block() first, which switched
+        // the current block to body_block and caused the exit branch to land inside
+        // the loop body instead of guarding the entry to it.
         self.emit_instruction(Command::JumpFalse(
             Location::None,
             Value::Register(condition.clone()),
         ));
         self.deallocate_register(condition.id);
         let body_jump = self.get_last_jump_id();
+
+        let body_block = self.new_block();
+        self.add_loop(condition_block, body_block);
         self.compile_statement(*stmt.body);
         self.emit_instruction(Command::Jump(Location::Block(condition_block)));
         let next_block = self.new_block();

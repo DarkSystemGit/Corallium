@@ -334,7 +334,7 @@ impl IrGen {
                 func.params.values().map(|x| x.clone()).collect(),
                 Box::new(func.return_ty.clone()),
             ),
-            self.current_fn + 1,
+            self.next_fn_id,
         );
         let curr_fn = self.current_fn;
         self.next_fn_id += 1;
@@ -1373,8 +1373,8 @@ impl IrGen {
         assign: Expression,
         loc: SourceLocation,
     ) -> Option<Output> {
-        let place = Value::Register(self.compile_place_expr(var, loc)?);
         let val = self.compile_expression(assign, loc)?;
+        let place = Value::Register(self.compile_place_expr(var, loc)?);
         self.emit_instruction(Command::Store(Value::Register(val.clone()), place));
         Some(val)
     }

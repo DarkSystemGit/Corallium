@@ -543,6 +543,14 @@ fn exec_bytecode(machine: &mut Machine) {
                 println!("Storef {} -> %{}", args[1], args[0]);
             }
         }
+        CommandType::Equals => {
+            //Eq(a,b)
+            let args = take_bytes(machine, 2);
+            machine.core.r1 = (args[0] == args[1]) as i16;
+            if machine.debug {
+                println!("Equals {} {} -> {}", args[0], args[1], machine.core.r1);
+            }
+        }
         CommandType::Exit => {
             //exit()
             machine.on = false;
@@ -1107,6 +1115,7 @@ fn dt_size(i: DataType) -> usize {
         DataType::None => 1,
     }
 }
+//srp is kinda broken
 impl Stack {
     fn new() -> Stack {
         Stack { data: Vec::new() }

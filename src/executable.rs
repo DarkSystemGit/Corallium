@@ -553,6 +553,7 @@ impl Fn {
             });
         bytecode.push(19);
         bytecode.extend_from_slice(&pack_i32(block_map[&(self.entrypoint)] as i32));
+        //dbg!(self.symbol_table.len(), &self.name);
         for (i, block) in self.blocks.iter_mut().enumerate() {
             let block_code = flatten_vec(
                 block

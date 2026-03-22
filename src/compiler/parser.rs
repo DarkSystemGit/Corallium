@@ -423,10 +423,22 @@ impl Parser {
                 self.matchToken(TokenKind::RightBracket)?;
                 Some(Pattern::Array(elements))
             }
-            TokenKind::Integer(i) => Some(Pattern::Literal(Literal::Int(i))),
-            TokenKind::Float(f) => Some(Pattern::Literal(Literal::Float(f))),
-            TokenKind::String(s) => Some(Pattern::Literal(Literal::String(s))),
-            TokenKind::Bool(b) => Some(Pattern::Literal(Literal::Bool(b))),
+            TokenKind::Integer(i) => {
+                self.next();
+                Some(Pattern::Literal(Literal::Int(i)))
+            }
+            TokenKind::Float(f) => {
+                self.next();
+                Some(Pattern::Literal(Literal::Float(f)))
+            }
+            TokenKind::String(s) => {
+                self.next();
+                Some(Pattern::Literal(Literal::String(s)))
+            }
+            TokenKind::Bool(b) => {
+                self.next();
+                Some(Pattern::Literal(Literal::Bool(b)))
+            }
             _ => None,
         }
     }
@@ -442,7 +454,7 @@ impl Parser {
     fn parseBreakStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
-        self.matchToken(TokenKind::Semicolon)?;
+        //self.matchToken(TokenKind::Semicolon)?;
         Some(Statement {
             kind: StatementKind::Break,
             loc,
@@ -451,7 +463,7 @@ impl Parser {
     fn parseContinueStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
-        self.matchToken(TokenKind::Semicolon)?;
+        //self.matchToken(TokenKind::Semicolon)?;
         Some(Statement {
             kind: StatementKind::Continue,
             loc,
@@ -574,6 +586,7 @@ impl Parser {
         let condition = self.parseExpression()?;
         self.matchToken(TokenKind::RightParen)?;
         let body = Box::new(self.parseBlockStatement()?);
+        self.matchToken(TokenKind::Semicolon);
         Some(Statement {
             kind: StatementKind::While(WhileStatement { condition, body }),
             loc,
@@ -598,6 +611,7 @@ impl Parser {
         };
         self.matchToken(TokenKind::RightParen)?;
         let body = Box::new(self.parseBlockStatement()?);
+        self.matchToken(TokenKind::Semicolon)?;
         Some(Statement {
             kind: StatementKind::For(ForStatement {
                 init,
@@ -635,6 +649,7 @@ impl Parser {
             }
             _ => None,
         };
+        self.matchToken(TokenKind::Semicolon)?;
         Some(Statement {
             kind: StatementKind::If(IfStatement {
                 condition,

@@ -65,6 +65,7 @@ pub fn run_cases() {
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
         comp_func(),
+        comp_control_flow(),
         comp_arithmentic(),
         comp_loop(),
         TestCase::new("stack_case", TestType::Internal(stack_case)),
@@ -82,6 +83,36 @@ fn get_cases() -> Vec<TestCase> {
 // loops
 // defer
 // calls&args
+//if
+// match
+fn comp_control_flow() -> TestCase {
+    TestCase::new(
+        "CompilerControlFlow",
+        TestType::Compiler(
+            r#"
+                fn main() -> void {
+                    let x: i16=1+2+3;
+                    let y: i16=4*5*6;
+                    let z: i32=(y as i32)/(x as i32);
+                    let a: i16=0;
+                    if((z as i16)<25){
+                        for(let i: i16=0;i<10;i=i+1){
+                            match i%2{
+                                0->a=a+1,
+                                _->continue
+                            };
+                        };
+                    }else{
+                        a=-1;
+                    };
+                    a;
+                    return;
+                }
+                "#
+            .to_string(),
+        ),
+    )
+}
 fn comp_arithmentic() -> TestCase {
     TestCase::new(
         "CompilerArithmetic",
@@ -109,7 +140,7 @@ fn comp_loop() -> TestCase {
                     while (acc<(50 as i32)){
                         defer acc=acc+add;
                         let add: i32=(5 as i32);
-                    }
+                    };
                     return;
                 }
                 "#
@@ -122,20 +153,25 @@ fn comp_func() -> TestCase {
         "CompilerFunc",
         TestType::Compiler(
             r#"
+                fn body()->i32{
+                    let add: i32=(5 as i32);
+                    return add;
+                }
                 fn forloop(start: i32)->i32{
                 let acc: i32=start;
                 defer acc=acc+(1 as i32);
                 while (acc<(50 as i32)){
                     defer acc=acc+add;
-                    let add: i32=(5 as i32);
-                }
+                    let add: i32=body();
+                };
                 return acc;
                 }
+
                 fn main() -> void {
                     let c:i32=0;
                     for (let i: i16=0;i<10;i=i+1){
                         c=c+forloop(i as i32);
-                    }
+                    };
                     c;
                     return;
                 }

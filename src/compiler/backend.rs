@@ -221,10 +221,12 @@ impl Backend {
                 };
                 *slot = (sym.name.clone(), ty, sym.size.unwrap());
             }
+            self.log(format!("Emitting fn {}:", func_def.name.clone()));
             self.functions
                 .push(Function::new(func_def.name, params, symbols));
             self.loc = (self.functions.len() - 1, 0);
             for (i, block) in func_def.body.iter().enumerate() {
+                self.log(format!("Emitting block {}:", i));
                 self.functions[self.loc.0].blocks.push(vec![]);
                 self.loc.1 = i;
                 self.reset_phys_regs();

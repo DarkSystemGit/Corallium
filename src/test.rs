@@ -25,10 +25,10 @@ impl TestCase {
         }
     }
 }
-pub fn run_cases() {
+pub fn run_cases(debug: bool) {
     for case in get_cases() {
         println!("Executing test {}", case.name);
-        let mut machine = Machine::new(false);
+        let mut machine = Machine::new(debug);
         match case.ttype {
             TestType::External(exe) => {
                 let mut disk: Disk = vec![DiskSection {
@@ -36,7 +36,7 @@ pub fn run_cases() {
                     id: 0,
                     data: vec![],
                 }] as Disk;
-                exe.build(0, &mut disk, true);
+                exe.build(0, &mut disk, debug);
                 machine.set_disk(disk);
                 machine.run();
             }
@@ -48,11 +48,12 @@ pub fn run_cases() {
                     id: 0,
                     data: vec![],
                 }] as Disk;
-                exe.build(0, &mut disk, true);
+                exe.build(0, &mut disk, debug);
                 machine.set_disk(disk);
-                machine.debug = true;
-                for log in logs {
-                    println!("{}", log);
+                if debug {
+                    for log in logs {
+                        println!("{}", log);
+                    }
                 }
                 machine.run();
             }
@@ -64,10 +65,11 @@ pub fn run_cases() {
 }
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
-        comp_func(),
-        comp_control_flow(),
         comp_arithmentic(),
         comp_loop(),
+        comp_control_flow(),
+        comp_data_structs(),
+        comp_func(),
         TestCase::new("stack_case", TestType::Internal(stack_case)),
         gfx_case(),
         orig_case(),
@@ -85,6 +87,54 @@ fn get_cases() -> Vec<TestCase> {
 // calls&args
 //if
 // match
+// structs! & unions &Enums
+fn comp_data_structs() -> TestCase {
+    TestCase::new(
+        "CompilerDataStructures",
+        TestType::Compiler(
+            r#"
+                union Shape{
+                    rectangle: [u32;2],
+                    circle: u32,
+                    triangle: [u32;3]
+                }
+                enum Color{
+                    Red,
+                    Green,
+                    Blue
+                }
+                struct Person{
+                    name: [char; 4],
+                    favoriteColor: Color,
+                    favoriteShape: Shape,
+                    age: u32
+                }
+                fn main()->void{
+                    let bob: Person=Person{
+                        name: "Bob",
+                        age: 20 as u32,
+                        favoriteColor: Color::Blue,
+                        favoriteShape: Shape::triangle([3,4,5])
+                    };
+                    let name: [char; 4]=bob.name;
+                    let color: i16=match bob.favoriteColor{
+                        Color::Blue->2,
+                        Color::Red->1,
+                        _->99
+                    };
+                    let age: u32=bob.age;
+                    let isTriangle: i16=match bob.favoriteShape{
+                        Shape::triangle(_)->11,
+                        _->99
+                    };
+                    age;
+                    return;
+                }
+                "#
+            .to_string(),
+        ),
+    )
+}
 fn comp_control_flow() -> TestCase {
     TestCase::new(
         "CompilerControlFlow",
@@ -97,6 +147,9 @@ fn comp_control_flow() -> TestCase {
                     let a: i16=0;
                     if((z as i16)<25){
                         for(let i: i16=0;i<10;i=i+1){
+                            if (i==8){
+                                break;
+                            };
                             match i%2{
                                 0->a=a+1,
                                 _->continue

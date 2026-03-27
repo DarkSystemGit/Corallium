@@ -46,6 +46,7 @@ fn exec_bytecode(machine: &mut Machine) {
         }
         CommandType::AddU => {
             //addu(u16,u16)->r1
+            // TODO: add map of all regs with unsigned currently within them to vm
             let args: Vec<u16> = take_bytes(machine, 2)
                 .iter()
                 .map(|x| (*x as i16) as u16)

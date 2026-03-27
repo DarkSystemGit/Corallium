@@ -27,6 +27,11 @@ impl Lexer {
         let start = self.input.position;
         let ch = self.input.next().unwrap();
         match ch {
+            '?' => Token::new(
+                TokenKind::Operator(OperatorKind::Optional),
+                start,
+                start + 1,
+            ),
             '(' => Token::new(TokenKind::LeftParen, start, start + 1),
             ')' => Token::new(TokenKind::RightParen, start, start + 1),
             '{' => Token::new(TokenKind::LeftBrace, start, start + 1),
@@ -309,6 +314,8 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "import" => Some(KeywordKind::Import),
         "type" => Some(KeywordKind::Type),
         "defer" => Some(KeywordKind::Defer),
+        "try" => Some(KeywordKind::Try),
+        "catch" => Some(KeywordKind::Catch),
         _ => None,
     }
 }
@@ -469,6 +476,8 @@ pub enum KeywordKind {
     Import,
     Type,
     Defer,
+    Try,
+    Catch,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {
@@ -492,6 +501,7 @@ pub enum OperatorKind {
     Assign,
     Dot,
     Sizeof,
+    Optional,
 }
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum TypeKind {

@@ -359,6 +359,14 @@ impl Executable {
         println!("-------Insertion Jump-------");
         println!("Jump to Entry Point: %{}", entrypoint);
         println!("-------Bytecode-------");
+        println!(
+            "Functions: {}",
+            self.fns
+                .iter()
+                .map(|x| x.name.clone())
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
         for (i, chunk) in bytecode.chunks(32).map(|slice| slice.to_vec()).enumerate() {
             println!("{:07}: {:?}", i * 32, chunk);
         }

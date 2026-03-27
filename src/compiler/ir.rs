@@ -94,7 +94,7 @@ pub struct Function {
     pub body: Vec<Vec<Command>>,
     jump_stack: Vec<[usize; 2]>,
     current_block: usize,
-    loop_stack: Vec<[usize; 2]>,
+    loop_stack: Vec<LoopStackEntry>,
     loop_patches: HashMap<usize, Vec<usize>>,
     next_id: usize,
     next_param_id: usize,
@@ -293,7 +293,7 @@ impl IrGen {
                 self.compile_if(stmt, statement.loc);
             }
             StatementKind::While(stmt) => {
-                self.compile_while(stmt, statement.loc);
+                self.compile_while(stmt, statement.loc, None);
             }
             StatementKind::For(stmt) => {
                 self.compile_for(stmt, statement.loc);
@@ -749,6 +749,7 @@ impl IrGen {
                     self.emit_instruction(Command::Jump(Location::None));
                     end_id.push(self.get_last_jump_id());
                     self.update_jump(jump, Command::JumpFalse(Location::Block(nb), pat));
+                    self.new_block();
                 }
                 self.new_block();
                 let current_loc = self.current_block();
@@ -930,7 +931,8 @@ impl IrGen {
                             if let Some(value) = fields.get(field) {
                                 let expr = self.compile_expression(value.clone(), loc)?;
                                 if expr.ty == def_fields[field] {
-                                    let temp = self.alloc_get(expr.ty.clone())?;
+                                    let temp = self
+                                        .alloc_get(TypeKind::Pointer(Box::new(expr.ty.clone())))?;
                                     self.emit_instruction(Command::Add(
                                         Value::Location(Location::Symbol(symbol.id, offset)),
                                         Value::ARP,
@@ -1565,30 +1567,7 @@ impl IrGen {
         if let Some(init) = stmt.init {
             self.compile_statement(*init);
         }
-        let body_statement = self
-            .convert_stmt_to_block(*stmt.body.clone(), loc.clone())
-            .unwrap_or_else(|| {
-                self.emitError(loc.clone(), "Expected block for while body");
-                vec![]
-            });
-
-        let body = match stmt.increment.is_some() {
-            true => Box::new(Statement {
-                kind: StatementKind::Block(
-                    vec![
-                        body_statement,
-                        vec![Statement {
-                            kind: StatementKind::Expression(stmt.increment.unwrap()),
-                            loc: loc.clone(),
-                        }],
-                    ]
-                    .concat(),
-                    None,
-                ),
-                loc: stmt.body.loc,
-            }),
-            false => stmt.body,
-        };
+        let body = stmt.body;
         let wstmt = WhileStatement {
             condition: match stmt.condition {
                 Some(condition) => condition,
@@ -1596,16 +1575,23 @@ impl IrGen {
             },
             body,
         };
-        self.compile_while(wstmt, loc);
+        self.compile_while(
+            wstmt,
+            loc,
+            Some(Statement {
+                kind: StatementKind::Expression(stmt.increment.unwrap()),
+                loc: loc.clone(),
+            }),
+        );
     }
-    fn compile_while(&mut self, stmt: WhileStatement, loc: SourceLocation) -> Option<Output> {
+    fn compile_while(
+        &mut self,
+        stmt: WhileStatement,
+        loc: SourceLocation,
+        for_inc: Option<Statement>,
+    ) -> Option<Output> {
         let condition_block = self.new_block();
         let condition = self.compile_expression(stmt.condition, loc)?;
-
-        // FIX: emit JumpFalse HERE, while still in condition_block, before creating
-        // the body block.  The original code called new_block() first, which switched
-        // the current block to body_block and caused the exit branch to land inside
-        // the loop body instead of guarding the entry to it.
         self.emit_instruction(Command::JumpFalse(
             Location::None,
             Value::Register(condition.clone()),
@@ -1614,8 +1600,11 @@ impl IrGen {
         let body_jump = self.get_last_jump_id();
 
         let body_block = self.new_block();
-        self.add_loop(condition_block, body_block);
+        self.add_loop(condition_block, body_block, for_inc.clone());
         self.compile_statement(*stmt.body);
+        if for_inc.is_some() {
+            self.compile_statement(for_inc?);
+        }
         self.emit_instruction(Command::Jump(Location::Block(condition_block)));
         let next_block = self.new_block();
         self.update_jump(
@@ -1639,8 +1628,11 @@ impl IrGen {
             self.emitError(loc, "Continue statement not within a loop");
             return;
         }
-        let condition = self.get_last_loop()[0];
-        self.emit_instruction(Command::Jump(Location::Block(condition)));
+        let currLoop = self.get_last_loop();
+        if currLoop.increment.is_some() {
+            self.compile_statement(currLoop.increment.unwrap());
+        }
+        self.emit_instruction(Command::Jump(Location::Block(currLoop.condition)));
     }
     fn compile_break(&mut self, loc: SourceLocation) {
         if self.functions[self.current_fn].loop_stack.is_empty() {
@@ -1683,18 +1675,23 @@ impl IrGen {
             None
         }
     }
-    fn add_loop(&mut self, conditon_block: usize, jump_block: usize) {
+    fn add_loop(&mut self, conditon_block: usize, jump_block: usize, increment: Option<Statement>) {
         self.functions[self.current_fn]
             .loop_stack
-            .push([conditon_block, jump_block]);
+            .push(LoopStackEntry {
+                condition: conditon_block,
+                jump: jump_block,
+                increment,
+            });
         let i = self.functions[self.current_fn].loop_stack.len() - 1;
         self.functions[self.current_fn]
             .loop_patches
             .insert(i, vec![]);
     }
-    fn get_last_loop(&mut self) -> [usize; 2] {
+    fn get_last_loop(&mut self) -> LoopStackEntry {
         self.functions[self.current_fn].loop_stack
             [self.functions[self.current_fn].loop_stack.len() - 1]
+            .clone()
     }
     fn end_loop(&mut self) {
         self.functions[self.current_fn].loop_stack.pop();
@@ -1820,4 +1817,10 @@ impl IrGen {
         };
         size
     }
+}
+#[derive(Debug, Clone)]
+struct LoopStackEntry {
+    condition: usize,
+    jump: usize,
+    increment: Option<Statement>,
 }

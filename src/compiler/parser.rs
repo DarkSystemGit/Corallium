@@ -454,7 +454,9 @@ impl Parser {
     fn parseBreakStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
-        //self.matchToken(TokenKind::Semicolon)?;
+        if self.peek().kind == TokenKind::Semicolon {
+            self.matchToken(TokenKind::Semicolon)?;
+        }
         Some(Statement {
             kind: StatementKind::Break,
             loc,
@@ -463,7 +465,9 @@ impl Parser {
     fn parseContinueStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
-        //self.matchToken(TokenKind::Semicolon)?;
+        if self.peek().kind == TokenKind::Semicolon {
+            self.matchToken(TokenKind::Semicolon)?;
+        }
         Some(Statement {
             kind: StatementKind::Continue,
             loc,

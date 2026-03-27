@@ -4,14 +4,6 @@ use crate::executable::{Bytecode, Executable, Fn};
 use crate::vm::CommandType as CmdType;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-// ---------------------------------------------------------------------------
-// Physical register file
-// ---------------------------------------------------------------------------
-// R1–R5  : 16-bit general purpose
-// EX1    : 32-bit, aliases R2 + R3
-// EX2    : 32-bit, aliases R4 + R5
-// F1, F2 : 32-bit float
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PhysReg {
     R1,
@@ -30,10 +22,6 @@ enum RegLoc {
     Stack(usize),
     Physical(PhysReg),
 }
-
-// ---------------------------------------------------------------------------
-// Instruction representation
-// ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub enum Inst {
@@ -75,13 +63,11 @@ pub enum LogicOp {
     Shl,
     Shr,
 }
-
 #[derive(Debug)]
 pub enum MemoryOp {
     Load,
     Store,
 }
-
 #[derive(Debug)]
 pub enum ArithmeticOp {
     Add,
@@ -90,7 +76,6 @@ pub enum ArithmeticOp {
     Div,
     Mod,
 }
-
 #[derive(Debug)]
 pub enum StackOp {
     Push,
@@ -116,16 +101,16 @@ pub struct Function {
     pub params: Vec<(String, TypeKind, usize)>,
     pub symbols: Vec<(String, TypeKind, usize)>,
     pub blocks: Vec<Vec<Inst>>,
-
     virt_locs: BTreeMap<usize, RegLoc>,
     phys_owners: BTreeMap<PhysReg, usize>,
     dirty_regs: HashSet<PhysReg>,
     stack_bytes: usize,
-    /// For a virtual register currently in a physical register but NOT dirty,
-    /// records the stack slot that holds a valid copy. Cleared when the register
-    /// is written (marked dirty). Lets spill() reuse the existing slot instead
-    /// of allocating a new one and leaving it with garbage.
     stack_home: HashMap<usize, usize>,
+    /// Canonical stack slot for each vreg, assigned on first spill and never
+    /// changed for the lifetime of the function. Unlike `stack_home` (which is
+    /// cleared every block and on every write), this persists unconditionally so
+    /// that all blocks — e.g. every arm of a match — write and read the same slot.
+    permanent_stack_slots: HashMap<usize, usize>,
 }
 
 impl Function {
@@ -144,6 +129,7 @@ impl Function {
             dirty_regs: HashSet::new(),
             stack_bytes: 0,
             stack_home: HashMap::new(),
+            permanent_stack_slots: HashMap::new(),
         }
     }
 }
@@ -159,8 +145,17 @@ pub struct Backend {
     current_block_usage: HashMap<usize, usize>,
     current_var_scopes: HashMap<usize, HashSet<usize>>,
 
+    // ---- LRU (secondary tiebreaker only) -----------------------------------
     register_lru: HashMap<PhysReg, usize>,
     time_step: usize,
+
+    // ---- Next-use distance (primary eviction criterion) --------------------
+    /// For each virtual register in the current block: sorted list of command
+    /// indices at which it is read. Built once per block before selection starts.
+    next_use_map: HashMap<usize, Vec<usize>>,
+    /// Index of the command being processed. Incremented after each command so
+    /// `next_use_distance` correctly returns the *remaining* uses.
+    current_cmd_idx: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +168,6 @@ impl Backend {
         ir_gen.compile();
         let mut registers = ir_gen.registers.clone();
         registers.sort_by_key(|x| x.id);
-
         Backend {
             input: ir_gen,
             functions: Vec::new(),
@@ -184,13 +178,14 @@ impl Backend {
             current_var_scopes: HashMap::new(),
             register_lru: HashMap::new(),
             time_step: 0,
+            next_use_map: HashMap::new(),
+            current_cmd_idx: 0,
         }
     }
 
     pub fn select_instructions(&mut self) {
         let input_funcs = self.input.functions.clone();
         for func_def in input_funcs {
-            // Build a map of which blocks each virtual register is used in.
             self.current_var_scopes.clear();
             for (b_idx, block) in func_def.body.iter().enumerate() {
                 for cmd in block {
@@ -200,16 +195,15 @@ impl Backend {
                 }
             }
 
-            // Separate symbols and parameters by their definition kind.
             let mut symbols: Vec<(String, TypeKind, usize)> = Vec::new();
             let mut params: Vec<(String, TypeKind, usize)> = Vec::new();
             for sym in &func_def.symbols {
                 let slot = match &sym.body {
-                    Definition::Var(ty) => {
+                    Definition::Var(_) => {
                         symbols.resize(sym.id + 1, ("".into(), TypeKind::Void, 0));
                         &mut symbols[sym.id]
                     }
-                    Definition::Parameter(ty) => {
+                    Definition::Parameter(_) => {
                         params.resize(sym.id + 1, ("".into(), TypeKind::Void, 0));
                         &mut params[sym.id]
                     }
@@ -221,10 +215,12 @@ impl Backend {
                 };
                 *slot = (sym.name.clone(), ty, sym.size.unwrap());
             }
-            self.log(format!("Emitting fn {}:", func_def.name.clone()));
+
+            self.log(format!("Emitting fn {}:", func_def.name));
             self.functions
                 .push(Function::new(func_def.name, params, symbols));
             self.loc = (self.functions.len() - 1, 0);
+
             for (i, block) in func_def.body.iter().enumerate() {
                 self.log(format!("Emitting block {}:", i));
                 self.functions[self.loc.0].blocks.push(vec![]);
@@ -234,6 +230,10 @@ impl Backend {
                 self.register_lru.clear();
                 self.time_step = 0;
 
+                // Build next-use map for this block before processing it.
+                self.next_use_map = Self::build_next_use(block);
+                self.current_cmd_idx = 0;
+
                 for cmd in block {
                     Self::collect_reads(cmd, |id| {
                         *self.current_block_usage.entry(id).or_default() += 1;
@@ -241,6 +241,7 @@ impl Backend {
                 }
                 for command in block {
                     self.process_command(command);
+                    self.current_cmd_idx += 1;
                 }
                 self.flush_registers();
             }
@@ -271,13 +272,41 @@ impl Backend {
             );
             exe.add_fn(bytefn);
         }
-
         exe
     }
 }
 
 // ---------------------------------------------------------------------------
-// Backend — instruction selection
+// Next-use helpers
+// ---------------------------------------------------------------------------
+
+impl Backend {
+    /// Scan `block` and record, for each virtual register, every command index
+    /// at which it appears as a source operand. The lists are naturally sorted
+    /// ascending because we iterate in order.
+    fn build_next_use(block: &[Command]) -> HashMap<usize, Vec<usize>> {
+        let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, cmd) in block.iter().enumerate() {
+            Self::collect_reads(cmd, |id| {
+                map.entry(id).or_default().push(i);
+            });
+        }
+        map
+    }
+
+    /// How many commands until `virt_id` is next read after `current_cmd_idx`.
+    /// Returns `usize::MAX` when it has no further reads — the ideal eviction target.
+    fn next_use_distance(&self, virt_id: usize) -> usize {
+        let after = self.current_cmd_idx;
+        self.next_use_map
+            .get(&virt_id)
+            .and_then(|uses| uses.iter().find(|&&u| u > after).copied())
+            .unwrap_or(usize::MAX)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Instruction selection
 // ---------------------------------------------------------------------------
 
 impl Backend {
@@ -361,7 +390,6 @@ impl Backend {
                 self.emit(Inst::OpCode(OpCode::Jump));
                 self.emit(Inst::Location(loc.clone()));
             }
-
             Command::JumpTrue(loc, cond) => {
                 self.flush_registers();
                 let op_c = self.resolve_and_free(cond);
@@ -369,7 +397,6 @@ impl Backend {
                 self.emit(Inst::Location(loc.clone()));
                 self.emit(op_c);
             }
-
             Command::JumpFalse(loc, cond) => {
                 self.flush_registers();
                 let op_c = self.resolve_and_free(cond);
@@ -377,7 +404,6 @@ impl Backend {
                 self.emit(Inst::Location(loc.clone()));
                 self.emit(op_c);
             }
-
             Command::Call(loc, _) => {
                 self.flush_registers();
                 let loc_op = self.resolve_and_free(loc);
@@ -414,7 +440,6 @@ impl Backend {
                 self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, ty)));
                 self.emit(op_a);
             }
-
             Command::Pop(a) => {
                 let reg_a = self.allocate_output(a);
                 let ty = self.get_cmd_type(&a.ty);
@@ -428,9 +453,6 @@ impl Backend {
             &self.functions[self.loc.0].blocks[self.loc.1][block_start..]
         ));
     }
-
-    // Arithmetic/logic/comparison helpers — the dest register is always hardcoded
-    // to a specific physical register for simplicity.
 
     fn emit_math(&mut self, op: ArithmeticOp, a: &Value, b: &Value, c: &Output) {
         let ty = self.get_cmd_type(&c.ty);
@@ -456,95 +478,78 @@ impl Backend {
         self.emit_binary(op_code, PhysReg::R1, a, b, c.id as usize);
     }
 
-    /// Shared core for all binary ops: resolve operands, spill dest if occupied,
-    /// claim dest, emit the instruction.
     fn emit_binary(&mut self, op_code: OpCode, dest: PhysReg, a: &Value, b: &Value, out_id: usize) {
         let op_a = self.resolve_operand(a);
         let op_b = self.resolve_operand(b);
-
         if !self.is_reg_free(dest) {
             self.spill(dest);
         }
-
         let valid_a = self.validate_operand(op_a, a);
         let valid_b = self.validate_operand(op_b, b);
-
         self.claim_reg(dest, out_id);
         self.mark_phys_dirty(dest);
-
         self.emit(Inst::OpCode(op_code));
         self.emit(valid_a);
         self.emit(valid_b);
-
         self.free_op(a);
         self.free_op(b);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Backend — register allocation
+// Register allocation
 // ---------------------------------------------------------------------------
 
 impl Backend {
-    /// Returns the physical register currently holding `virt_id`, reloading
-    /// from the stack if necessary.
     fn ensure_reg(&mut self, virt_id: usize) -> PhysReg {
         let func_idx = self.loc.0;
-
         match self.functions[func_idx].virt_locs.get(&virt_id).copied() {
             Some(RegLoc::Physical(p)) => {
                 self.touch_reg(p);
-                return p;
+                p
             }
             Some(RegLoc::Stack(offset)) => {
                 let ty = self.registers[virt_id].ty.clone();
                 let phys = self.allocate_reg(&ty, virt_id);
                 let cmd_ty = self.get_cmd_type(&ty);
-
                 self.log(format!(
                     "Reloading vreg{} from stack offset {} into {:?}",
                     virt_id, offset, phys
                 ));
-
-                // EX1 is used as a scratch register to compute the stack address.
-                // Preserve it only when it isn't the reload destination itself.
                 let save_ex1 = !self.is_reg_free(PhysReg::EX1) && phys != PhysReg::EX1;
                 if save_ex1 {
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
                     self.emit(Inst::PhysReg(PhysReg::EX1));
                 }
-
                 self.emit_stack_addr(offset);
-
                 self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Load, cmd_ty)));
                 self.emit(Inst::PhysReg(PhysReg::EX1));
                 self.emit(Inst::PhysReg(phys));
-
                 if save_ex1 {
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
                     self.emit(Inst::PhysReg(PhysReg::EX1));
                 }
-
-                // A freshly reloaded register is clean (matches its stack copy).
-                // Record the home slot so spill() can reuse it without emitting
-                // a Store if this register is never written before being evicted.
                 self.functions[func_idx].dirty_regs.remove(&phys);
                 self.functions[func_idx].stack_home.insert(virt_id, offset);
                 phys
             }
             None => {
-                // No location recorded yet — allocate a fresh register.
                 let ty = self.registers[virt_id].ty.clone();
                 let phys = self.allocate_reg(&ty, virt_id);
-                // Owner already set by claim_reg inside allocate_reg; mark dirty
-                // and clear any stale home slot.
                 self.mark_phys_dirty(phys);
                 phys
             }
         }
     }
 
-    /// Find a free register for `owner_id`, spilling the LRU candidate if needed.
+    /// Allocate a physical register for `owner_id`.
+    ///
+    /// Eviction policy (two-level):
+    ///   1. PRIMARY  — next-use distance: evict the register whose owner will
+    ///      not be read again for the longest time. A register with no more
+    ///      reads in this block gets distance `usize::MAX` — always preferred.
+    ///   2. SECONDARY — LRU timestamp: break ties by evicting the least
+    ///      recently used register.
     fn allocate_reg(&mut self, ty: &TypeKind, owner_id: usize) -> PhysReg {
         let candidates: &[PhysReg] = match self.get_cmd_type(ty) {
             CommandType::I16 | CommandType::U16 => &[
@@ -558,15 +563,29 @@ impl Backend {
             CommandType::F32 => &[PhysReg::F1, PhysReg::F2],
         };
 
+        // Fast path: grab a free register without any spill.
         if let Some(&free) = candidates.iter().find(|&&r| self.is_reg_free(r)) {
             self.claim_reg(free, owner_id);
             return free;
         }
 
+        // Slow path: pick the victim with the greatest next-use distance.
+        // If two candidates tie on distance, prefer the LRU one (lower timestamp).
+        let func_idx = self.loc.0;
         let &victim = candidates
             .iter()
-            .min_by_key(|r| self.register_lru.get(r).copied().unwrap_or(0))
+            .max_by_key(|&&r| {
+                let dist = if let Some(&owner) = self.functions[func_idx].phys_owners.get(&r) {
+                    self.next_use_distance(owner)
+                } else {
+                    usize::MAX // alias group with no direct owner — safe to evict
+                };
+                // Negate LRU so lower timestamp (older) = larger secondary key.
+                let lru = self.register_lru.get(&r).copied().unwrap_or(0);
+                (dist, usize::MAX - lru)
+            })
             .unwrap_or(&candidates[0]);
+
         self.spill(victim);
         self.claim_reg(victim, owner_id);
         victim
@@ -580,6 +599,16 @@ impl Backend {
 
     fn claim_reg(&mut self, reg: PhysReg, virt_id: usize) {
         let func = &mut self.functions[self.loc.0];
+        // If this vreg already lives in a *different* physical register, evict it
+        // from there before installing it in the new one. Without this, both the
+        // old and new physical registers remain listed as owners of the same vreg,
+        // causing flush_registers to spill it twice — once with the correct value
+        // and once with the stale value from the old register, corrupting the slot.
+        if let Some(RegLoc::Physical(old_phys)) = func.virt_locs.get(&virt_id).copied() {
+            if old_phys != reg && func.phys_owners.get(&old_phys).copied() == Some(virt_id) {
+                func.phys_owners.remove(&old_phys);
+            }
+        }
         func.phys_owners.insert(reg, virt_id);
         func.virt_locs.insert(virt_id, RegLoc::Physical(reg));
         self.touch_reg(reg);
@@ -589,10 +618,6 @@ impl Backend {
         let func_idx = self.loc.0;
         if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).copied()
         {
-            // Only touch the physical register's state if this virtual register
-            // still owns it.  After a spill-and-reclaim sequence a different
-            // virtual register may have taken ownership; unconditionally clearing
-            // the dirty flag here would silently discard that register's value.
             if self.functions[func_idx].phys_owners.get(&p).copied() == Some(virt_id) {
                 self.functions[func_idx].phys_owners.remove(&p);
                 self.functions[func_idx].dirty_regs.remove(&p);
@@ -622,7 +647,6 @@ impl Backend {
     fn spill(&mut self, reg: PhysReg) {
         let func_idx = self.loc.0;
         let Some(owner_id) = self.functions[func_idx].phys_owners.get(&reg).copied() else {
-            // No direct owner — recurse into aliases.
             match reg {
                 PhysReg::EX1 => {
                     self.spill(PhysReg::R2);
@@ -641,18 +665,31 @@ impl Backend {
 
         let is_dirty = self.functions[func_idx].dirty_regs.contains(&reg);
 
-        // Reuse an existing stack slot if one was already assigned.
-        // Crucially, also check stack_home: if this register was reloaded from
-        // the stack but never written (not dirty), virt_locs now shows
-        // Physical(reg) not Stack(_), but the home slot still has a valid copy.
         let offset = match self.functions[func_idx].virt_locs.get(&owner_id).copied() {
             Some(RegLoc::Stack(o)) => o,
             _ => {
-                if let Some(&home) = self.functions[func_idx].stack_home.get(&owner_id) {
+                // Permanent slot takes priority over stack_home. This ensures
+                // that every block (e.g. every arm of a match expression) always
+                // spills a given vreg to the same slot, so the join block can
+                // reload it correctly regardless of which arm ran at runtime.
+                if let Some(&perm) = self.functions[func_idx]
+                    .permanent_stack_slots
+                    .get(&owner_id)
+                {
+                    perm
+                } else if let Some(&home) = self.functions[func_idx].stack_home.get(&owner_id) {
+                    // First time we've seen this vreg spilled — promote the
+                    // transient home slot to a permanent one.
+                    self.functions[func_idx]
+                        .permanent_stack_slots
+                        .insert(owner_id, home);
                     home
                 } else {
                     let o = self.functions[func_idx].stack_bytes;
                     self.functions[func_idx].stack_bytes += self.size_of_phys_reg(reg);
+                    self.functions[func_idx]
+                        .permanent_stack_slots
+                        .insert(owner_id, o);
                     o
                 }
             }
@@ -678,8 +715,6 @@ impl Backend {
         self.functions[func_idx].dirty_regs.remove(&reg);
     }
 
-    /// Emit the two-add sequence that loads ARP + offset + SymbolSecLen into EX1,
-    /// leaving EX1 pointing at the spill slot. Used by both spill and reload paths.
     fn emit_stack_addr(&mut self, offset: usize) {
         self.emit(Inst::OpCode(OpCode::Arithmetic(
             ArithmeticOp::Add,
@@ -695,27 +730,13 @@ impl Backend {
         self.emit(Inst::RestoreOffset);
     }
 
-    /// Emit instructions to save an EX1-aliased register (EX1, R2, or R3) to
-    /// the stack. EX2 is used as a temporary to hold the value while EX1 is
-    /// repurposed to compute the destination address.
     fn emit_spill_ex1_alias(&mut self, reg: PhysReg, ty: CommandType, offset: usize) {
-        // Save EX2 so we can use it as a scratch value holder.
         self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
         self.emit(Inst::PhysReg(PhysReg::EX2));
-
-        // Copy all 32 bits of EX1 into EX2 before EX1 is clobbered by the address
-        // computation. Using I32 (not `ty`) ensures both narrow halves are captured:
-        // R4 = original R2, R5 = original R3. This is correct even when spilling
-        // only R2 or R3 individually, because the I32 restore below puts both
-        // halves back, preserving the peer register's value if it is still live.
         self.emit(Inst::OpCode(OpCode::Move(CommandType::I32)));
         self.emit(Inst::PhysReg(PhysReg::EX1));
         self.emit(Inst::PhysReg(PhysReg::EX2));
-
-        // Compute the stack address in EX1.
         self.emit_stack_addr(offset);
-
-        // Store the saved value (in EX2 or its narrow alias) to the stack address.
         let value_reg = match reg {
             PhysReg::EX1 => PhysReg::EX2,
             PhysReg::R2 => PhysReg::R4,
@@ -725,8 +746,6 @@ impl Backend {
         self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
         self.emit(Inst::PhysReg(PhysReg::EX1));
         self.emit(Inst::PhysReg(value_reg));
-
-        // Restore EX1 from EX2, then restore EX2.
         self.emit(Inst::OpCode(OpCode::Move(CommandType::I32)));
         self.emit(Inst::PhysReg(PhysReg::EX2));
         self.emit(Inst::PhysReg(PhysReg::EX1));
@@ -734,37 +753,28 @@ impl Backend {
         self.emit(Inst::PhysReg(PhysReg::EX2));
     }
 
-    /// Emit instructions to save a non-EX1-aliased register to the stack.
-    /// EX1 is used as a scratch register for the address and is preserved
-    /// via push/pop if it was already in use.
     fn emit_spill_general(&mut self, reg: PhysReg, ty: CommandType, offset: usize) {
         let save_ex1 = !self.is_reg_free(PhysReg::EX1);
         if save_ex1 {
             self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
             self.emit(Inst::PhysReg(PhysReg::EX1));
         }
-
         self.emit_stack_addr(offset);
-
         self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
         self.emit(Inst::PhysReg(PhysReg::EX1));
         self.emit(Inst::PhysReg(reg));
-
         if save_ex1 {
             self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
             self.emit(Inst::PhysReg(PhysReg::EX1));
         }
     }
 
-    /// Flush all currently live registers to the stack (e.g. before a branch).
-    /// Normalises alias groups so we never try to spill both EX1 and R2/R3.
     fn flush_registers(&mut self) {
         let active: HashSet<PhysReg> = self.functions[self.loc.0]
             .phys_owners
             .keys()
             .copied()
             .collect();
-
         let to_flush: Vec<PhysReg> = active
             .iter()
             .filter(|&&reg| match reg {
@@ -774,14 +784,11 @@ impl Backend {
             })
             .copied()
             .collect();
-
         for r in to_flush {
             self.spill(r);
         }
     }
 
-    /// Clear physical-register state at the start of a new block.
-    /// Stack locations remain valid across blocks; physical ones do not.
     fn reset_phys_regs(&mut self) {
         let func = &mut self.functions[self.loc.0];
         func.phys_owners.clear();
@@ -791,8 +798,6 @@ impl Backend {
             .retain(|_, loc| matches!(loc, RegLoc::Stack(_)));
     }
 
-    /// Mark a physical register as dirty (its value differs from any stack copy)
-    /// and invalidate the stack_home record for whoever owns it.
     fn mark_phys_dirty(&mut self, phys: PhysReg) {
         let func_idx = self.loc.0;
         self.functions[func_idx].dirty_regs.insert(phys);
@@ -801,15 +806,11 @@ impl Backend {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // LRU tracking
-    // -----------------------------------------------------------------------
-
+    // Secondary tiebreaker: LRU timestamps + alias group coherence.
     fn touch_reg(&mut self, reg: PhysReg) {
         self.time_step += 1;
         let ts = self.time_step;
         self.register_lru.insert(reg, ts);
-        // Keep alias groups in sync so LRU picks are coherent.
         match reg {
             PhysReg::EX1 => {
                 self.register_lru.insert(PhysReg::R2, ts);
@@ -831,7 +832,7 @@ impl Backend {
 }
 
 // ---------------------------------------------------------------------------
-// Backend — operand resolution helpers
+// Operand resolution helpers
 // ---------------------------------------------------------------------------
 
 impl Backend {
@@ -856,8 +857,6 @@ impl Backend {
         }
     }
 
-    /// Re-resolve `inst` if the value has been moved since `inst` was computed.
-    /// This handles the case where a spill occurred between resolve and use.
     fn validate_operand(&mut self, inst: Inst, source_val: &Value) -> Inst {
         if let (Inst::PhysReg(reg), Value::Register(virt)) = (&inst, source_val) {
             let func_idx = self.loc.0;
@@ -919,11 +918,9 @@ impl Backend {
                 reg(a);
                 reg(b);
             }
-
             Command::Not(a, _) | Command::Move(a, _) | Command::Push(a) | Command::Load(a, _) => {
                 reg(a)
             }
-
             Command::Store(val, ptr) => {
                 reg(val);
                 reg(ptr);
@@ -937,7 +934,7 @@ impl Backend {
 }
 
 // ---------------------------------------------------------------------------
-// Backend — type helpers
+// Type helpers
 // ---------------------------------------------------------------------------
 
 impl Backend {
@@ -990,6 +987,10 @@ impl Backend {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Lowering
+// ---------------------------------------------------------------------------
+
 impl Backend {
     fn lower_inst(inst: &Inst, fun: &Function, all_fns: &[Function]) -> Bytecode {
         match inst {
@@ -1014,7 +1015,6 @@ impl Backend {
                 ir::Location::Function(fnid) => Bytecode::FunctionRef(all_fns[*fnid].name.clone()),
                 ir::Location::None => unreachable!(),
             },
-
             Inst::Immediate(im) => match im.ty {
                 TypeKind::Float32 => Bytecode::Float(im.value as f32),
                 TypeKind::Int32 | TypeKind::Uint32 | TypeKind::Pointer(_) => {
@@ -1022,9 +1022,7 @@ impl Backend {
                 }
                 _ => Bytecode::Int(im.value as i16),
             },
-
             Inst::StackOffset(off) => Bytecode::Int(*off as i16),
-
             Inst::PhysReg(r) => Bytecode::Register(match r {
                 PhysReg::R1 => CmdType::R1,
                 PhysReg::R2 => CmdType::R2,
@@ -1036,7 +1034,6 @@ impl Backend {
                 PhysReg::F1 => CmdType::F1,
                 PhysReg::F2 => CmdType::F2,
             }),
-
             Inst::OpCode(op) => Bytecode::Command(match op {
                 OpCode::Exit => CmdType::Exit,
                 OpCode::Call => CmdType::Call,
@@ -1048,7 +1045,6 @@ impl Backend {
                 OpCode::GreaterThan => CmdType::Greater,
                 OpCode::LessThan => CmdType::LessThan,
                 OpCode::Move(_) => CmdType::Mov,
-
                 OpCode::Stack(sop, ty) => match sop {
                     StackOp::Push => match ty {
                         CommandType::F32 => CmdType::Pushf,
@@ -1057,7 +1053,6 @@ impl Backend {
                     },
                     StackOp::Pop => CmdType::Pop,
                 },
-
                 OpCode::Memory(mop, ty) => match mop {
                     MemoryOp::Load => match ty {
                         CommandType::F32 => CmdType::Loadf,
@@ -1070,7 +1065,6 @@ impl Backend {
                         _ => CmdType::Store,
                     },
                 },
-
                 OpCode::Arithmetic(aop, ty) => match aop {
                     ArithmeticOp::Add => match ty {
                         CommandType::I16 => CmdType::Add,
@@ -1102,7 +1096,6 @@ impl Backend {
                     },
                     ArithmeticOp::Mod => CmdType::Mod,
                 },
-
                 OpCode::Logic(lop, ty) => {
                     let wide = matches!(ty, CommandType::I32 | CommandType::U32 | CommandType::F32);
                     match lop {

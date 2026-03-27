@@ -3,7 +3,9 @@ use super::lexer::TypeKind;
 use crate::executable::{Bytecode, Executable, Fn};
 use crate::vm::CommandType as CmdType;
 use std::collections::{BTreeMap, HashMap, HashSet};
-
+//DISCLAIMER:
+//The register allocation code in this file is mostly ai-generated(gemini&claude), due to my lack of knowlage on the subject.
+// I regert using AI, as it prob mad me spend more time than I need to debugging, but oh well.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PhysReg {
     R1,
@@ -106,10 +108,6 @@ pub struct Function {
     dirty_regs: HashSet<PhysReg>,
     stack_bytes: usize,
     stack_home: HashMap<usize, usize>,
-    /// Canonical stack slot for each vreg, assigned on first spill and never
-    /// changed for the lifetime of the function. Unlike `stack_home` (which is
-    /// cleared every block and on every write), this persists unconditionally so
-    /// that all blocks — e.g. every arm of a match — write and read the same slot.
     permanent_stack_slots: HashMap<usize, usize>,
 }
 
@@ -144,17 +142,12 @@ pub struct Backend {
     registers: Vec<ir::Register>,
     current_block_usage: HashMap<usize, usize>,
     current_var_scopes: HashMap<usize, HashSet<usize>>,
+    def_blocks: HashMap<usize, usize>,
 
-    // ---- LRU (secondary tiebreaker only) -----------------------------------
     register_lru: HashMap<PhysReg, usize>,
     time_step: usize,
 
-    // ---- Next-use distance (primary eviction criterion) --------------------
-    /// For each virtual register in the current block: sorted list of command
-    /// indices at which it is read. Built once per block before selection starts.
     next_use_map: HashMap<usize, Vec<usize>>,
-    /// Index of the command being processed. Incremented after each command so
-    /// `next_use_distance` correctly returns the *remaining* uses.
     current_cmd_idx: usize,
 }
 
@@ -176,6 +169,7 @@ impl Backend {
             registers,
             current_block_usage: HashMap::new(),
             current_var_scopes: HashMap::new(),
+            def_blocks: HashMap::new(),
             register_lru: HashMap::new(),
             time_step: 0,
             next_use_map: HashMap::new(),
@@ -187,10 +181,15 @@ impl Backend {
         let input_funcs = self.input.functions.clone();
         for func_def in input_funcs {
             self.current_var_scopes.clear();
+            self.def_blocks.clear();
+
             for (b_idx, block) in func_def.body.iter().enumerate() {
                 for cmd in block {
                     Self::collect_reads(cmd, |id| {
                         self.current_var_scopes.entry(id).or_default().insert(b_idx);
+                    });
+                    Self::collect_writes(cmd, |id| {
+                        self.def_blocks.insert(id, b_idx);
                     });
                 }
             }
@@ -230,7 +229,6 @@ impl Backend {
                 self.register_lru.clear();
                 self.time_step = 0;
 
-                // Build next-use map for this block before processing it.
                 self.next_use_map = Self::build_next_use(block);
                 self.current_cmd_idx = 0;
 
@@ -277,13 +275,10 @@ impl Backend {
 }
 
 // ---------------------------------------------------------------------------
-// Next-use helpers
+// Next-use & Liveness helpers
 // ---------------------------------------------------------------------------
 
 impl Backend {
-    /// Scan `block` and record, for each virtual register, every command index
-    /// at which it appears as a source operand. The lists are naturally sorted
-    /// ascending because we iterate in order.
     fn build_next_use(block: &[Command]) -> HashMap<usize, Vec<usize>> {
         let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
         for (i, cmd) in block.iter().enumerate() {
@@ -294,14 +289,65 @@ impl Backend {
         map
     }
 
-    /// How many commands until `virt_id` is next read after `current_cmd_idx`.
-    /// Returns `usize::MAX` when it has no further reads — the ideal eviction target.
     fn next_use_distance(&self, virt_id: usize) -> usize {
         let after = self.current_cmd_idx;
         self.next_use_map
             .get(&virt_id)
             .and_then(|uses| uses.iter().find(|&&u| u > after).copied())
             .unwrap_or(usize::MAX)
+    }
+
+    fn phys_next_use_distance(&self, reg: PhysReg) -> usize {
+        let func_idx = self.loc.0;
+        let get_dist = |r| {
+            if let Some(&owner) = self.functions[func_idx].phys_owners.get(&r) {
+                self.next_use_distance(owner)
+            } else {
+                usize::MAX
+            }
+        };
+
+        let mut dist = get_dist(reg);
+        match reg {
+            PhysReg::EX1 => {
+                dist = dist.min(get_dist(PhysReg::R2)).min(get_dist(PhysReg::R3));
+            }
+            PhysReg::EX2 => {
+                dist = dist.min(get_dist(PhysReg::R4)).min(get_dist(PhysReg::R5));
+            }
+            PhysReg::R2 | PhysReg::R3 => dist = dist.min(get_dist(PhysReg::EX1)),
+            PhysReg::R4 | PhysReg::R5 => dist = dist.min(get_dist(PhysReg::EX2)),
+            _ => {}
+        }
+        dist
+    }
+
+    fn is_strictly_local(&self, virt_id: usize) -> bool {
+        let b_idx = self.loc.1;
+        let defined_here = self.def_blocks.get(&virt_id) == Some(&b_idx);
+        let only_used_here = self
+            .current_var_scopes
+            .get(&virt_id)
+            .map_or(true, |s| s.len() == 1 && s.contains(&b_idx));
+        defined_here && only_used_here
+    }
+
+    fn can_clobber(&self, reg: PhysReg) -> bool {
+        let func_idx = self.loc.0;
+        let check = |r: PhysReg| -> bool {
+            if let Some(&owner) = self.functions[func_idx].phys_owners.get(&r) {
+                self.next_use_distance(owner) == usize::MAX && self.is_strictly_local(owner)
+            } else {
+                true
+            }
+        };
+        match reg {
+            PhysReg::EX1 => check(PhysReg::EX1) && check(PhysReg::R2) && check(PhysReg::R3),
+            PhysReg::EX2 => check(PhysReg::EX2) && check(PhysReg::R4) && check(PhysReg::R5),
+            PhysReg::R2 | PhysReg::R3 => check(reg) && check(PhysReg::EX1),
+            PhysReg::R4 | PhysReg::R5 => check(reg) && check(PhysReg::EX2),
+            _ => check(reg),
+        }
     }
 }
 
@@ -339,7 +385,7 @@ impl Backend {
                 } else {
                     PhysReg::R1
                 };
-                if !self.is_reg_free(dest) {
+                if !self.is_reg_free(dest) && !self.can_clobber(dest) {
                     self.spill(dest);
                 }
                 let valid_a = self.validate_operand(op_a, a);
@@ -351,14 +397,41 @@ impl Backend {
             }
 
             Command::Move(val, out) => {
-                let src = self.resolve_operand(val);
-                let dest = self.allocate_output(out);
-                let ty = self.get_cmd_type(&out.ty);
-                let valid_src = self.validate_operand(src, val);
-                self.emit(Inst::OpCode(OpCode::Move(ty)));
-                self.emit(valid_src);
-                self.emit(Inst::PhysReg(dest));
-                self.free_op(val);
+                let mut coalesced = false;
+
+                // Move Coalescing (Eliminate redundant moves in favor of register renaming)
+                if let Value::Register(r) = val {
+                    let r_id = r.id as usize;
+                    let out_id = out.id as usize;
+
+                    if self.next_use_distance(r_id) == usize::MAX
+                        && self.is_strictly_local(r_id)
+                        && self.get_cmd_type(&r.ty) == self.get_cmd_type(&out.ty)
+                    {
+                        let phys = self.ensure_reg(r_id);
+                        self.functions[self.loc.0].phys_owners.remove(&phys);
+                        self.functions[self.loc.0].virt_locs.remove(&r_id);
+                        self.functions[self.loc.0].dirty_regs.remove(&phys);
+
+                        self.claim_reg(phys, out_id);
+                        self.mark_phys_dirty(phys);
+
+                        self.free_op(val);
+                        coalesced = true;
+                    }
+                }
+
+                if !coalesced {
+                    let src = self.resolve_operand(val);
+                    let dest = self.allocate_output(out);
+                    let ty = self.get_cmd_type(&out.ty);
+                    let valid_src = self.validate_operand(src, val);
+
+                    self.emit(Inst::OpCode(OpCode::Move(ty)));
+                    self.emit(valid_src);
+                    self.emit(Inst::PhysReg(dest));
+                    self.free_op(val);
+                }
             }
 
             Command::Load(ptr, dest) => {
@@ -481,11 +554,14 @@ impl Backend {
     fn emit_binary(&mut self, op_code: OpCode, dest: PhysReg, a: &Value, b: &Value, out_id: usize) {
         let op_a = self.resolve_operand(a);
         let op_b = self.resolve_operand(b);
-        if !self.is_reg_free(dest) {
+
+        if !self.is_reg_free(dest) && !self.can_clobber(dest) {
             self.spill(dest);
         }
+
         let valid_a = self.validate_operand(op_a, a);
         let valid_b = self.validate_operand(op_b, b);
+
         self.claim_reg(dest, out_id);
         self.mark_phys_dirty(dest);
         self.emit(Inst::OpCode(op_code));
@@ -542,14 +618,6 @@ impl Backend {
         }
     }
 
-    /// Allocate a physical register for `owner_id`.
-    ///
-    /// Eviction policy (two-level):
-    ///   1. PRIMARY  — next-use distance: evict the register whose owner will
-    ///      not be read again for the longest time. A register with no more
-    ///      reads in this block gets distance `usize::MAX` — always preferred.
-    ///   2. SECONDARY — LRU timestamp: break ties by evicting the least
-    ///      recently used register.
     fn allocate_reg(&mut self, ty: &TypeKind, owner_id: usize) -> PhysReg {
         let candidates: &[PhysReg] = match self.get_cmd_type(ty) {
             CommandType::I16 | CommandType::U16 => &[
@@ -563,24 +631,20 @@ impl Backend {
             CommandType::F32 => &[PhysReg::F1, PhysReg::F2],
         };
 
-        // Fast path: grab a free register without any spill.
         if let Some(&free) = candidates.iter().find(|&&r| self.is_reg_free(r)) {
             self.claim_reg(free, owner_id);
             return free;
         }
 
-        // Slow path: pick the victim with the greatest next-use distance.
-        // If two candidates tie on distance, prefer the LRU one (lower timestamp).
-        let func_idx = self.loc.0;
+        if let Some(&clobberable) = candidates.iter().find(|&&r| self.can_clobber(r)) {
+            self.claim_reg(clobberable, owner_id);
+            return clobberable;
+        }
+
         let &victim = candidates
             .iter()
             .max_by_key(|&&r| {
-                let dist = if let Some(&owner) = self.functions[func_idx].phys_owners.get(&r) {
-                    self.next_use_distance(owner)
-                } else {
-                    usize::MAX // alias group with no direct owner — safe to evict
-                };
-                // Negate LRU so lower timestamp (older) = larger secondary key.
+                let dist = self.phys_next_use_distance(r);
                 let lru = self.register_lru.get(&r).copied().unwrap_or(0);
                 (dist, usize::MAX - lru)
             })
@@ -599,11 +663,6 @@ impl Backend {
 
     fn claim_reg(&mut self, reg: PhysReg, virt_id: usize) {
         let func = &mut self.functions[self.loc.0];
-        // If this vreg already lives in a *different* physical register, evict it
-        // from there before installing it in the new one. Without this, both the
-        // old and new physical registers remain listed as owners of the same vreg,
-        // causing flush_registers to spill it twice — once with the correct value
-        // and once with the stale value from the old register, corrupting the slot.
         if let Some(RegLoc::Physical(old_phys)) = func.virt_locs.get(&virt_id).copied() {
             if old_phys != reg && func.phys_owners.get(&old_phys).copied() == Some(virt_id) {
                 func.phys_owners.remove(&old_phys);
@@ -668,18 +727,12 @@ impl Backend {
         let offset = match self.functions[func_idx].virt_locs.get(&owner_id).copied() {
             Some(RegLoc::Stack(o)) => o,
             _ => {
-                // Permanent slot takes priority over stack_home. This ensures
-                // that every block (e.g. every arm of a match expression) always
-                // spills a given vreg to the same slot, so the join block can
-                // reload it correctly regardless of which arm ran at runtime.
                 if let Some(&perm) = self.functions[func_idx]
                     .permanent_stack_slots
                     .get(&owner_id)
                 {
                     perm
                 } else if let Some(&home) = self.functions[func_idx].stack_home.get(&owner_id) {
-                    // First time we've seen this vreg spilled — promote the
-                    // transient home slot to a permanent one.
                     self.functions[func_idx]
                         .permanent_stack_slots
                         .insert(owner_id, home);
@@ -806,7 +859,6 @@ impl Backend {
         }
     }
 
-    // Secondary tiebreaker: LRU timestamps + alias group coherence.
     fn touch_reg(&mut self, reg: PhysReg) {
         self.time_step += 1;
         let ts = self.time_step;
@@ -881,14 +933,8 @@ impl Backend {
         } else {
             false
         };
-        if exhausted {
-            let is_local = self
-                .current_var_scopes
-                .get(&virt_id)
-                .map_or(false, |s| s.len() == 1);
-            if is_local {
-                self.release_reg(virt_id);
-            }
+        if exhausted && self.is_strictly_local(virt_id) {
+            self.release_reg(virt_id);
         }
     }
 
@@ -929,6 +975,41 @@ impl Backend {
             Command::Call(loc, _) => reg(loc),
             Command::Ret(Some(v)) => reg(v),
             Command::Pop(_) | Command::Jump(_) | Command::Ret(None) => {}
+        }
+    }
+
+    fn collect_writes<F>(cmd: &Command, mut cb: F)
+    where
+        F: FnMut(usize),
+    {
+        let mut reg = |out: &Output| {
+            cb(out.id as usize);
+        };
+        match cmd {
+            Command::Add(_, _, out)
+            | Command::Sub(_, _, out)
+            | Command::Mul(_, _, out)
+            | Command::Div(_, _, out)
+            | Command::Mod(_, _, out)
+            | Command::And(_, _, out)
+            | Command::Or(_, _, out)
+            | Command::Xor(_, _, out)
+            | Command::Shl(_, _, out)
+            | Command::Shr(_, _, out)
+            | Command::Eq(_, _, out)
+            | Command::Gt(_, _, out)
+            | Command::Lt(_, _, out)
+            | Command::Not(_, out)
+            | Command::Move(_, out)
+            | Command::Load(_, out)
+            | Command::Pop(out) => reg(out),
+            Command::Store(_, _)
+            | Command::Jump(_)
+            | Command::JumpTrue(_, _)
+            | Command::JumpFalse(_, _)
+            | Command::Call(_, _)
+            | Command::Ret(_)
+            | Command::Push(_) => {}
         }
     }
 }

@@ -25,7 +25,8 @@ impl TestCase {
         }
     }
 }
-pub fn run_cases(debug: bool) {
+pub fn run_cases() {
+    let debug = input!("Debug? [y/n]") == "y";
     for case in get_cases() {
         println!("Executing test {}", case.name);
         let mut machine = Machine::new(debug);

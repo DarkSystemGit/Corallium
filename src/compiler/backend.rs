@@ -1032,9 +1032,8 @@ impl Backend {
         match ty {
             TypeKind::Int16 | TypeKind::Bool => CommandType::I16,
             TypeKind::Uint16 | TypeKind::Enum(_) | TypeKind::Char => CommandType::U16,
-            TypeKind::Int32 => CommandType::I32,
+            TypeKind::Int32 | TypeKind::Pointer(_) | TypeKind::Optional(_) => CommandType::I32,
             TypeKind::Uint32 => CommandType::U32,
-            TypeKind::Pointer(_) => CommandType::I32,
             TypeKind::Float32 => CommandType::F32,
             _ => CommandType::U32,
         }
@@ -1098,9 +1097,10 @@ impl Backend {
             },
             Inst::Immediate(im) => match im.ty {
                 TypeKind::Float32 => Bytecode::Float(im.value as f32),
-                TypeKind::Int32 | TypeKind::Uint32 | TypeKind::Pointer(_) => {
-                    Bytecode::Int32(im.value as i32)
-                }
+                TypeKind::Int32
+                | TypeKind::Uint32
+                | TypeKind::Pointer(_)
+                | TypeKind::Optional(_) => Bytecode::Int32(im.value as i32),
                 _ => Bytecode::Int(im.value as i16),
             },
             Inst::StackOffset(off) => Bytecode::Int(*off as i16),

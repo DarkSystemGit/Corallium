@@ -361,6 +361,79 @@ impl IrGen {
     }
     fn compile_expression(&mut self, expr: Expression, loc: SourceLocation) -> Option<Output> {
         match expr {
+            Expression::Try(expr, catch) => {
+                let expr_reg = self.compile_expression(*expr, loc)?;
+                match catch.is_some() {
+                    true => {
+                        self.emit_instruction(Command::JumpTrue(
+                            Location::None,
+                            Value::Register(expr_reg.clone()),
+                        ));
+                        let jump = self.get_last_jump_id();
+                        let ret = self.alloc_get(self.unwrap_ptr_ty(expr_reg.ty.clone())?)?;
+                        match catch.unwrap().kind {
+                            StatementKind::ImplictRet(return_expr) => {
+                                let val = self.compile_expression(return_expr, loc)?;
+                                self.emit_instruction(Command::Move(
+                                    Value::Register(val),
+                                    ret.clone(),
+                                ));
+                            }
+                            StatementKind::Block(stmts, return_expr) => {
+                                self.compile_block(stmts);
+                                if let Some(return_expr) = return_expr {
+                                    let val = self.compile_expression(return_expr, loc)?;
+                                    if val.ty != ret.clone().ty {
+                                        self.emitError(
+                                    loc,
+                                    &format!(
+                                        "Type mismatch, expected block to return {}, got {}",
+                                        ret.clone().ty,
+                                        val.ty
+                                    ),
+                                );
+                                    }
+                                    self.emit_instruction(Command::Move(
+                                        Value::Register(val),
+                                        ret.clone(),
+                                    ));
+                                }
+                            }
+                            _ => {
+                                self.emitError(loc, "Catch expresssion must produce a value");
+                                return None;
+                            }
+                        }
+                        self.emit_instruction(Command::Jump(Location::None));
+                        let catch_jump = self.get_last_jump_id();
+                        self.new_block();
+                        let mut currb = self.current_block();
+                        self.update_jump(
+                            jump,
+                            Command::JumpTrue(
+                                Location::Block(currb),
+                                Value::Register(expr_reg.clone()),
+                            ),
+                        );
+                        self.emit_instruction(Command::Load(
+                            Value::Register(expr_reg),
+                            ret.clone(),
+                        ));
+                        self.new_block();
+                        currb = self.current_block();
+                        self.update_jump(catch_jump, Command::Jump(Location::Block(currb)));
+                        return Some(ret);
+                    }
+                    false => {
+                        let ret = self.alloc_get(self.unwrap_ptr_ty(expr_reg.ty.clone())?)?;
+                        self.emit_instruction(Command::Load(
+                            Value::Register(expr_reg),
+                            ret.clone(),
+                        ));
+                        return Some(ret);
+                    }
+                }
+            }
             Expression::Sizeof(ty) => {
                 let size = self.size_of(ty, loc)?;
                 let out = self.alloc_get(TypeKind::Uint32)?;
@@ -762,6 +835,41 @@ impl IrGen {
     }
     fn compile_literal(&mut self, lit: Literal, loc: SourceLocation) -> Option<Output> {
         match lit {
+            Literal::Null => {
+                let out = self.alloc_get(TypeKind::Optional(None))?;
+                self.emit_instruction(Command::Move(
+                    Value::Immediate(Immediate {
+                        value: 0.0,
+                        ty: TypeKind::Int32,
+                    }),
+                    out.clone(),
+                ));
+                Some(out)
+            }
+            Literal::Some(opt) => {
+                let opt = self.compile_expression(*opt, loc)?;
+                let name = format!(
+                    "__internal_option_{}",
+                    rand::rng()
+                        .sample_iter(&Alphanumeric)
+                        .take(32)
+                        .map(|c| c as char)
+                        .collect::<String>()
+                );
+                self.define_var(name.clone(), opt.ty.clone());
+                let sym = self.lookup_symbol(&name).unwrap().id;
+                let loc = self.alloc_get(TypeKind::Optional(Some(Box::new(opt.ty.clone()))))?;
+                self.emit_instruction(Command::Add(
+                    Value::ARP,
+                    Value::Location(Location::Symbol(sym, 0)),
+                    loc.clone(),
+                ));
+                self.emit_instruction(Command::Store(
+                    Value::Register(opt),
+                    Value::Register(loc.clone()),
+                ));
+                Some(loc)
+            }
             Literal::Int(value) => {
                 let ty = match (value > (i16::MAX as i32)) || (value < (i16::MIN as i32)) {
                     true => TypeKind::Int32,
@@ -1094,6 +1202,35 @@ impl IrGen {
             reg.clone(),
         );
         match pat {
+            Pattern::Some(some) => {
+                self.emit_instruction(Command::JumpTrue(
+                    Location::None,
+                    Value::Register(val.clone()),
+                ));
+                let start_jump = self.get_last_jump_id();
+                let r = self.alloc_get(self.unwrap_ptr_ty(val.ty.clone())?)?;
+                self.emit_instruction(Command::Load(Value::Register(val.clone()), r.clone()));
+                let inner = self.compile_pattern(*some, r, loc, None)?;
+                self.emit_instruction(Command::Move(Value::Register(inner), reg.clone()));
+                self.emit_instruction(Command::Jump(Location::None));
+                let ld_jump = self.get_last_jump_id();
+                self.new_block();
+                let mut currb = self.current_block();
+                self.update_jump(
+                    start_jump,
+                    Command::JumpTrue(Location::Block(currb), Value::Register(val.clone())),
+                );
+                self.emit_instruction(Command::Move(
+                    Value::Immediate(Immediate {
+                        value: 0.0,
+                        ty: TypeKind::Bool,
+                    }),
+                    reg.clone(),
+                ));
+                self.new_block();
+                currb = self.current_block();
+                self.update_jump(ld_jump, Command::Jump(Location::Block(currb)));
+            }
             Pattern::Wildcard => {
                 self.emit_instruction(true_move);
                 self.deallocate_register(val.id);
@@ -1578,10 +1715,13 @@ impl IrGen {
         self.compile_while(
             wstmt,
             loc,
-            Some(Statement {
-                kind: StatementKind::Expression(stmt.increment.unwrap()),
-                loc: loc.clone(),
-            }),
+            match stmt.increment.is_some() {
+                true => Some(Statement {
+                    kind: StatementKind::Expression(stmt.increment.unwrap()),
+                    loc: loc.clone(),
+                }),
+                _ => None,
+            },
         );
     }
     fn compile_while(
@@ -1814,6 +1954,7 @@ impl IrGen {
                     None
                 }
             }
+            TypeKind::Optional(ty) => Some(2),
         };
         size
     }

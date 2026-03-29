@@ -320,7 +320,11 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
     }
 }
 fn get_type(ident: &String, loc: &Location) -> Option<TypeKind> {
-    if ident.starts_with("&") {
+    if ident.ends_with('?') {
+        let content = &ident[..ident.len() - 1];
+        let inner_type = get_type(&content.to_string(), loc)?;
+        return Some(TypeKind::Optional(Some(Box::new(inner_type))));
+    } else if ident.starts_with("&") {
         let inner_type = get_type(&(ident.strip_prefix("&").unwrap().to_string()), loc);
         if inner_type.is_none() {
             return None;
@@ -478,6 +482,8 @@ pub enum KeywordKind {
     Defer,
     Try,
     Catch,
+    Null,
+    Some,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {
@@ -519,6 +525,7 @@ pub enum TypeKind {
     Union(String),
     Enum(String),
     Function(Vec<TypeKind>, Box<TypeKind>),
+    Optional(Option<Box<TypeKind>>),
 }
 impl Display for TypeKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
@@ -536,6 +543,11 @@ impl Display for TypeKind {
             TypeKind::Struct(name) => write!(f, "struct {}", name),
             TypeKind::Union(name) => write!(f, "union {}", name),
             TypeKind::Enum(name) => write!(f, "enum {}", name),
+            TypeKind::Optional(op) => match op {
+                Some(x) => write!(f, "{}?", *x),
+                None => write!(f, "None"),
+            },
+
             TypeKind::Function(params, ret) => write!(
                 f,
                 "fn({}) -> {}",

@@ -128,6 +128,7 @@ pub enum Pattern {
     Struct(String, Vec<(String, Pattern)>),
     Wildcard,
     Literal(Literal),
+    Some(Box<Pattern>),
 }
 #[derive(Debug, Clone)]
 pub struct Declaration {
@@ -152,6 +153,7 @@ pub enum Expression {
     Subscript(Box<Expression>, Box<Expression>),
     Match(MatchExpression),
     Sizeof(TypeKind),
+    Try(Box<Expression>, Option<Box<Statement>>),
 }
 #[derive(Debug, Clone)]
 pub enum Literal {
@@ -163,6 +165,8 @@ pub enum Literal {
     Struct(String, HashMap<String, Expression>),
     Enum(String, String),
     Union(String, String, Box<Expression>),
+    Null,
+    Some(Box<Expression>),
 }
 #[derive(Debug, Clone)]
 pub enum UnaryOperator {
@@ -191,6 +195,7 @@ pub enum BinaryOperator {
     PropertyAccess,
     Assign,
 }
+
 #[derive(Debug, Clone)]
 pub struct IfStatement {
     pub condition: Expression,
@@ -438,6 +443,17 @@ impl Parser {
             TokenKind::Bool(b) => {
                 self.next();
                 Some(Pattern::Literal(Literal::Bool(b)))
+            }
+            TokenKind::Keyword(KeywordKind::Null) => {
+                self.next();
+                Some(Pattern::Literal(Literal::Null))
+            }
+            TokenKind::Keyword(KeywordKind::Some) => {
+                self.next();
+                self.matchToken(TokenKind::LeftParen);
+                let inner = self.parsePattern()?;
+                self.matchToken(TokenKind::RightParen);
+                Some(Pattern::Some(Box::new(inner)))
             }
             _ => None,
         }
@@ -724,6 +740,12 @@ impl Parser {
             TokenKind::Float(f) => Expression::Literal(Literal::Float(f)),
             TokenKind::String(s) => Expression::Literal(Literal::String(s)),
             TokenKind::Bool(b) => Expression::Literal(Literal::Bool(b)),
+            TokenKind::Keyword(KeywordKind::Null) => Expression::Literal(Literal::Null),
+            TokenKind::Keyword(KeywordKind::Some) => {
+                let expr = self.parse_expr_bp(0)?;
+                self.matchToken(TokenKind::RightParen)?;
+                Expression::Literal(Literal::Some(Box::new(expr)))
+            }
             TokenKind::Identifier(name) => self.parseIdentifier(name)?,
             TokenKind::LeftBracket => self.parseArray()?,
             TokenKind::LeftParen => {
@@ -732,6 +754,17 @@ impl Parser {
                 Expression::Grouped(Box::new(expr))
             }
             TokenKind::Keyword(KeywordKind::Match) => self.parseMatch()?,
+            TokenKind::Keyword(KeywordKind::Try) => {
+                let expr = self.parse_expr_bp(0)?;
+                let catch_block = match self.peek().kind == TokenKind::Keyword(KeywordKind::Catch) {
+                    true => {
+                        self.next();
+                        Some(Box::new(self.parseStatement()?))
+                    }
+                    _ => None,
+                };
+                Expression::Try(Box::new(expr), catch_block)
+            }
             TokenKind::Operator(op) => {
                 if op != OperatorKind::Sizeof {
                     let ((), r_bp) = self.prefix_binding_power(&op);

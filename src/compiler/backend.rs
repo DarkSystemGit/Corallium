@@ -534,7 +534,34 @@ impl Backend {
             CommandType::F32 => PhysReg::F1,
             CommandType::I32 | CommandType::U32 => PhysReg::EX1,
         };
-        self.emit_binary(OpCode::Arithmetic(op, ty), dest, a, b, c.id as usize);
+        let is_32bit_mod =
+            matches!(op, ArithmeticOp::Mod) && matches!(ty, CommandType::I32 | CommandType::U32);
+        if is_32bit_mod {
+            let op_a = self.resolve_operand(a);
+            let op_b = self.resolve_operand(b);
+
+            if !self.is_reg_free(PhysReg::R1) && !self.can_clobber(PhysReg::R1) {
+                self.spill(PhysReg::R1);
+                self.mark_phys_dirty(PhysReg::R1);
+            }
+            let valid_a = self.validate_operand(op_a, a);
+            let valid_b = self.validate_operand(op_b, b);
+            self.emit(Inst::OpCode(OpCode::Arithmetic(op, ty)));
+            self.emit(valid_a);
+            self.emit(valid_b);
+            self.free_op(a);
+            self.free_op(b);
+            if !self.is_reg_free(dest) && !self.can_clobber(dest) {
+                self.spill(dest);
+            }
+            self.mark_phys_dirty(dest);
+            self.emit(Inst::OpCode(OpCode::Move(ty)));
+            self.emit(Inst::PhysReg(PhysReg::R1));
+            self.emit(Inst::PhysReg(dest));
+            self.claim_reg(dest, c.id as usize);
+        } else {
+            self.emit_binary(OpCode::Arithmetic(op, ty), dest, a, b, c.id as usize);
+        }
     }
 
     fn emit_logic(&mut self, op: LogicOp, a: &Value, b: &Value, c: &Output) {

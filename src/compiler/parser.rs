@@ -742,6 +742,7 @@ impl Parser {
             TokenKind::Bool(b) => Expression::Literal(Literal::Bool(b)),
             TokenKind::Keyword(KeywordKind::Null) => Expression::Literal(Literal::Null),
             TokenKind::Keyword(KeywordKind::Some) => {
+                self.matchToken(TokenKind::LeftParen)?;
                 let expr = self.parse_expr_bp(0)?;
                 self.matchToken(TokenKind::RightParen)?;
                 Expression::Literal(Literal::Some(Box::new(expr)))

@@ -290,7 +290,7 @@ fn is_whitespace(ch: char) -> bool {
     ch.is_whitespace()
 }
 fn is_alpha(ch: char) -> bool {
-    ch.is_alphabetic() || ch == '_'
+    ch.is_alphabetic() || ch == '_' || ch == '?'
 }
 fn is_alphanumeric(ch: char) -> bool {
     is_alpha(ch) || is_digit(ch)
@@ -316,6 +316,8 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "defer" => Some(KeywordKind::Defer),
         "try" => Some(KeywordKind::Try),
         "catch" => Some(KeywordKind::Catch),
+        "Some" => Some(KeywordKind::Some),
+        "None" => Some(KeywordKind::Null),
         _ => None,
     }
 }

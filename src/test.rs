@@ -66,6 +66,7 @@ pub fn run_cases() {
 }
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
+        comp_optional(),
         comp_arithmentic(),
         comp_loop(),
         comp_control_flow(),
@@ -89,6 +90,37 @@ fn get_cases() -> Vec<TestCase> {
 //if
 // match
 // structs! & unions &Enums
+fn comp_optional() -> TestCase {
+    TestCase::new(
+        "CompilerOptionalType",
+        TestType::Compiler(
+            r#"
+                fn optionalb(x:i32)->bool?{
+                    return match x%(3 as i32){
+                        1->Some(true),
+                        _->None
+                    };
+                }
+                fn optional(x: i32)->bool?{
+                    return match x%(2 as i32){
+                        1->Some(true),
+                        _->Some(try optionalb(x))
+                    };
+                }
+                fn main()->void{
+                    let testA: bool=try optional(5 as i32);
+                    let testB: bool=try optional(6 as i32) catch{
+                        false
+                    };
+                    testA;
+                    testB;
+                    return;
+                }
+            "#
+            .to_string(),
+        ),
+    )
+}
 fn comp_data_structs() -> TestCase {
     TestCase::new(
         "CompilerDataStructures",

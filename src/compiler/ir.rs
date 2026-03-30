@@ -99,6 +99,7 @@ pub struct Function {
     next_id: usize,
     next_param_id: usize,
     pub symbols: Vec<Symbol>,
+    pub return_ty: TypeKind,
 }
 #[derive(Debug)]
 pub struct IrGen {
@@ -130,6 +131,7 @@ impl IrGen {
                 symbols: Vec::new(),
                 next_id: 0,
                 next_param_id: 0,
+                return_ty: TypeKind::Void,
             }],
             defer_stack: Vec::new(),
             imports: Vec::new(),
@@ -351,6 +353,7 @@ impl IrGen {
             symbols: Vec::new(),
             next_id: 0,
             next_param_id: 0,
+            return_ty: func.return_ty,
         });
         for (name, ty) in func.params.iter() {
             self.define_parameter(name.clone(), ty.clone());
@@ -425,11 +428,32 @@ impl IrGen {
                         return Some(ret);
                     }
                     false => {
+                        self.emit_instruction(Command::JumpFalse(
+                            Location::None,
+                            Value::Register(expr_reg.clone()),
+                        ));
+                        let catch_jump = self.get_last_jump_id();
                         let ret = self.alloc_get(self.unwrap_ptr_ty(expr_reg.ty.clone())?)?;
                         self.emit_instruction(Command::Load(
-                            Value::Register(expr_reg),
+                            Value::Register(expr_reg.clone()),
                             ret.clone(),
                         ));
+                        self.emit_instruction(Command::Jump(Location::None));
+                        let load_jump = self.get_last_jump_id();
+                        let mut currb = self.new_block();
+                        self.update_jump(
+                            catch_jump,
+                            Command::JumpFalse(
+                                Location::Block(currb),
+                                Value::Register(expr_reg.clone()),
+                            ),
+                        );
+                        self.emit_instruction(Command::Ret(Some(Value::Immediate(Immediate {
+                            value: 0.0,
+                            ty: TypeKind::Optional(None),
+                        }))));
+                        currb = self.new_block();
+                        self.update_jump(load_jump, Command::Jump(Location::Block(currb)));
                         return Some(ret);
                     }
                 }
@@ -786,6 +810,16 @@ impl IrGen {
                             let val = self.compile_expression(return_expr, loc)?;
                             if ret.is_none() {
                                 ret = self.alloc_get(val.ty.clone());
+                            }
+                            if val.ty != ret.clone().unwrap().ty {
+                                self.emitError(
+                                    loc,
+                                    &format!(
+                                        "Invalid return type for match case, expected {}, got {}",
+                                        ret.clone().unwrap().ty,
+                                        val.ty
+                                    ),
+                                );
                             }
                             self.emit_instruction(Command::Move(
                                 Value::Register(val),
@@ -1521,6 +1555,9 @@ impl IrGen {
         if let TypeKind::Pointer(ptr) = wrapped {
             return Some(*ptr);
         }
+        if let TypeKind::Optional(Some(inner)) = wrapped {
+            return Some(*inner);
+        }
         None
     }
 
@@ -1668,6 +1705,17 @@ impl IrGen {
         if let Some(expr) = stmt.value {
             let output = self.compile_expression(expr, loc)?;
             let value = self.convert_output_to_value(output.clone());
+            if output.ty.clone() != self.functions[self.current_fn].return_ty {
+                self.emitError(
+                    loc,
+                    &format!(
+                        "Return type mismatch, expected {}, got {}",
+                        self.functions[self.current_fn].return_ty,
+                        output.ty.clone()
+                    ),
+                );
+                return None;
+            }
             self.emit_instruction(Command::Ret(Some(value)));
             self.deallocate_register(output.id);
         } else {

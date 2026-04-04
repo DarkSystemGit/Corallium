@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter, Result};
-
+use std::mem::discriminant;
 pub struct Lexer {
     input: InputStream,
     tokens: Vec<Token>,
@@ -40,7 +40,7 @@ impl Lexer {
                 let saved_pos = self.input.position;
                 let mut candidate = String::from("[");
                 let mut depth = 1;
-                while let Some(c) = self.input.peek() {
+                while let Some(_) = self.input.peek() {
                     let next_char = self.input.next().unwrap();
                     candidate.push(next_char);
                     match next_char {
@@ -511,7 +511,7 @@ pub enum OperatorKind {
     Sizeof,
     Optional,
 }
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone)]
 pub enum TypeKind {
     Int16,
     Int32,
@@ -528,6 +528,24 @@ pub enum TypeKind {
     Enum(String),
     Function(Vec<TypeKind>, Box<TypeKind>),
     Optional(Option<Box<TypeKind>>),
+}
+impl PartialEq for TypeKind {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (TypeKind::Optional(a), TypeKind::Optional(b)) => match (a, b) {
+                (None, _) | (_, None) => true,
+                (Some(inner_a), Some(inner_b)) => inner_a == inner_b,
+            },
+            (TypeKind::Pointer(a), TypeKind::Pointer(b)) => a == b,
+            (TypeKind::Array(ty_a, size_a), TypeKind::Array(ty_b, size_b)) => {
+                ty_a == ty_b && size_a == size_b
+            }
+            (TypeKind::Function(params_a, ret_a), TypeKind::Function(params_b, ret_b)) => {
+                params_a == params_b && ret_a == ret_b
+            }
+            _ => discriminant(self) == discriminant(other),
+        }
+    }
 }
 impl Display for TypeKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {

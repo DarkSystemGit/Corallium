@@ -601,7 +601,7 @@ fn exec_bytecode(machine: &mut Machine) {
         CommandType::Call => {
             //call(fnptr)
             let func = take_bytes(machine, 1)[0];
-            let arp = machine.core.srp + 16 * 1024 * 1024;
+            let arp = machine.core.stack.byte_len() + 16 * 1024 * 1024;
             machine.core.stack.push(
                 DataType::Int32(machine.core.arp as i32),
                 &mut machine.core.srp,
@@ -1124,7 +1124,9 @@ impl Stack {
     pub fn len(&self) -> usize {
         self.data.len()
     }
-
+    pub fn byte_len(&self) -> usize {
+        self.data.iter().map(|x| dt_size(*x)).sum()
+    }
     pub fn dump(&self) {
         self.data
             .chunks(16)

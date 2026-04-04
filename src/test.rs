@@ -205,7 +205,7 @@ fn comp_arithmentic() -> TestCase {
         TestType::Compiler(
             r#"
                 fn main() -> void {
-                    let x: i16=1+2+3;
+                    let x: i16=1+2+3; // 67
                     let y: i16=4*5*6;
                     let z: i32=(y as i32)/(x as i32);
                     return;

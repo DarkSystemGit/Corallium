@@ -88,6 +88,16 @@ enum UserType {
     Union(BTreeMap<String, TypeKind>),
 }
 #[derive(Debug, Clone)]
+enum ImplicitParamType {
+    ReturnPassthorugh,
+}
+#[derive(Debug, Clone)]
+pub struct ImplicitParam {
+    pub name: Option<String>,
+    pub ty: TypeKind,
+    pub param_ty: ImplicitParamType,
+}
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
     pub parameters: BTreeMap<String, TypeKind>,
@@ -100,6 +110,7 @@ pub struct Function {
     next_param_id: usize,
     pub symbols: Vec<Symbol>,
     pub return_ty: TypeKind,
+    pub implict_params: Vec<ImplicitParam>,
 }
 #[derive(Debug)]
 pub struct IrGen {
@@ -132,6 +143,7 @@ impl IrGen {
                 next_id: 0,
                 next_param_id: 0,
                 return_ty: TypeKind::Void,
+                implict_params: Vec::new(),
             }],
             defer_stack: Vec::new(),
             imports: Vec::new(),
@@ -354,6 +366,7 @@ impl IrGen {
             next_id: 0,
             next_param_id: 0,
             return_ty: func.return_ty,
+            implict_params: Vec::new(),
         });
         for (name, ty) in func.params.iter() {
             self.define_parameter(name.clone(), ty.clone());
@@ -736,6 +749,7 @@ impl IrGen {
                 let func = self.compile_expression(*func, loc);
                 if let Some(func) = func {
                     let (params, ret_ty) = self.unwrap_fn_type(func.ty.clone(), loc)?;
+                    let internalPtrRet = self.is_internal_ptr(ret_ty.clone())?;
                     if params.len() as u8 != argc {
                         self.emitError(loc, "function call argument count mismatch");
                     }
@@ -899,9 +913,10 @@ impl IrGen {
                     loc.clone(),
                 ));
                 self.emit_instruction(Command::Store(
-                    Value::Register(opt),
+                    Value::Register(opt.clone()),
                     Value::Register(loc.clone()),
                 ));
+                self.deallocate_register(opt.id);
                 Some(loc)
             }
             Literal::Int(value) => {
@@ -1212,6 +1227,15 @@ impl IrGen {
                 None
             }
         }
+    }
+    fn is_internal_ptr(&self, ty: TypeKind) -> Option<bool> {
+        Some(match self.unwrap_ptr_ty(ty)? {
+            TypeKind::Array(_, _)
+            | TypeKind::Struct(_)
+            | TypeKind::Union(_)
+            | TypeKind::Optional(_) => true,
+            _ => false,
+        })
     }
     fn compile_pattern(
         &mut self,
@@ -2002,7 +2026,7 @@ impl IrGen {
                     None
                 }
             }
-            TypeKind::Optional(ty) => Some(2),
+            TypeKind::Optional(_) => Some(2),
         };
         size
     }

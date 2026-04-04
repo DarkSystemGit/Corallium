@@ -287,7 +287,7 @@ impl Executable {
             ],
             true,
         );
-        f.build(0, &HashMap::new(), 0, &ConstantTable::new())
+        f.build(0, &HashMap::new(), 0, &ConstantTable::new(), false)
     }
     fn set_loader(&mut self, loader: Vec<i16>) {
         if loader.len() > self.max_loader_len as usize {
@@ -323,7 +323,13 @@ impl Executable {
         }) as usize;
         //TODO: handle contant building
         for func in self.fns.iter_mut() {
-            bytecode.extend(func.build(fn_map[&func.name], &fn_map, data_sec, &self.constants))
+            bytecode.extend(func.build(
+                fn_map[&func.name],
+                &fn_map,
+                data_sec,
+                &self.constants,
+                debug,
+            ))
         }
 
         Self::insert_bytecode_into_disk(
@@ -358,18 +364,16 @@ impl Executable {
         println!("Data Sector Count: {}", data_sectors);
         println!("-------Insertion Jump-------");
         println!("Jump to Entry Point: %{}", entrypoint);
-        println!("-------Bytecode-------");
         println!(
-            "Functions: {}",
+            "-------Functions-------\n{}",
             self.fns
                 .iter()
                 .map(|x| x.name.clone())
                 .collect::<Vec<String>>()
                 .join(", ")
         );
-        for (i, chunk) in bytecode.chunks(32).map(|slice| slice.to_vec()).enumerate() {
-            println!("{:07}: {:?}", i * 32, chunk);
-        }
+        println!("-------Bytecode-------");
+        display_bytecode(bytecode, 0);
         println!("-------Data-------");
         for (id, data) in self.constants.data_sec.iter().enumerate() {
             for (i, chunk) in data.chunks(32).map(|slice| slice.to_vec()).enumerate() {
@@ -381,6 +385,7 @@ impl Executable {
             }
         }
     }
+
     fn insert_bytecode_into_disk(
         &self,
         disk: &mut Disk,
@@ -517,6 +522,7 @@ impl Fn {
         }
         f
     }
+
     pub(crate) fn add_block(&mut self, block: Vec<Bytecode>, entrypoint: bool) -> isize {
         self.blocks.push(block);
         if entrypoint {
@@ -542,6 +548,7 @@ impl Fn {
         fn_map: &HashMap<String, usize>,
         data_sec: usize,
         consts: &ConstantTable,
+        debug: bool,
     ) -> Vec<i16> {
         let mut block_map: HashMap<usize, usize> = HashMap::new();
         let mut bytecode = Vec::new();
@@ -562,6 +569,17 @@ impl Fn {
         bytecode.push(19);
         bytecode.extend_from_slice(&pack_i32(block_map[&(self.entrypoint)] as i32));
         //dbg!(self.symbol_table.len(), &self.name);
+        if debug {
+            println!("-------Function {}-------", self.name);
+            println!(
+                "-------Symbol Table-------\n{:?}",
+                self.symbol_table.symbols
+            );
+            println!("-------Constants-------\n{:?}", consts.data_sec);
+            println!("-------Bytecode-------");
+            println!("_header:");
+            display_bytecode(&bytecode, 0);
+        }
         for (i, block) in self.blocks.iter_mut().enumerate() {
             let block_code = flatten_vec(
                 block
@@ -589,7 +607,7 @@ impl Fn {
                         Bytecode::Symbol(name, offset) => {
                             let loc = self.symbol_table.get_symbol(name) as i32 + *offset;
                             if self.name != "main" {
-                                pack_i32(loc + 2 + 2 + 5 + 4) //arp & return addr & registers r1-r5 then f1-f2
+                                pack_i32(loc /*+ 2 + 2 + 5 + 4*/) //arp & return addr & registers r1-r5 then f1-f2
                             } else {
                                 pack_i32(loc)
                             }
@@ -600,8 +618,13 @@ impl Fn {
                     })
                     .collect::<Vec<Vec<i16>>>(),
             );
+            if debug {
+                println!("Block {}:", i);
+                display_bytecode(&(block_code.iter().map(|x| *x).collect()), bytecode.len());
+            }
             bytecode.extend(block_code.iter().map(|x| *x));
         }
+
         bytecode
     }
     fn get_block_len(&self, block: &Vec<Bytecode>) -> usize {
@@ -629,5 +652,10 @@ impl Fn {
     pub fn add_symbol(&mut self, name: &str, size: usize) {
         self.symbol_table
             .add_symbol(Symbol::new(name.to_string(), size));
+    }
+}
+fn display_bytecode(bytecode: &Vec<i16>, offset: usize) {
+    for (i, chunk) in bytecode.chunks(32).map(|slice| slice.to_vec()).enumerate() {
+        println!("{:07}: {:?}", (i * 32) + offset, chunk);
     }
 }

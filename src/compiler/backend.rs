@@ -1,4 +1,6 @@
-use super::ir::{self, Command, Definition, Immediate, IrGen, Output, Value};
+use super::ir::{
+    self, Command, Definition, Immediate, ImplicitParam, ImplicitParamType, IrGen, Output, Value,
+};
 use super::lexer::TypeKind;
 use crate::executable::{Bytecode, Executable, Fn};
 use crate::vm::CommandType as CmdType;
@@ -109,6 +111,7 @@ pub struct Function {
     stack_bytes: usize,
     stack_home: HashMap<usize, usize>,
     permanent_stack_slots: HashMap<usize, usize>,
+    pub sret: bool,
 }
 
 impl Function {
@@ -116,6 +119,7 @@ impl Function {
         name: String,
         params: Vec<(String, TypeKind, usize)>,
         symbols: Vec<(String, TypeKind, usize)>,
+        sret: bool,
     ) -> Self {
         Self {
             name,
@@ -128,6 +132,7 @@ impl Function {
             stack_bytes: 0,
             stack_home: HashMap::new(),
             permanent_stack_slots: HashMap::new(),
+            sret,
         }
     }
 }
@@ -156,6 +161,14 @@ pub struct Backend {
 // ---------------------------------------------------------------------------
 
 impl Backend {
+    fn alias_group(reg: PhysReg) -> &'static [PhysReg] {
+        match reg {
+            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => &[PhysReg::EX1, PhysReg::R2, PhysReg::R3],
+            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => &[PhysReg::EX2, PhysReg::R4, PhysReg::R5],
+            _ => &[PhysReg::R1], // placeholder, callers handle non-aliased regs directly
+        }
+    }
+
     pub fn new(input: &str, filename: &str) -> Self {
         let mut ir_gen = IrGen::new(filename, input.to_string());
         ir_gen.compile();
@@ -195,7 +208,11 @@ impl Backend {
             }
 
             let mut symbols: Vec<(String, TypeKind, usize)> = Vec::new();
-            let mut params: Vec<(String, TypeKind, usize)> = Vec::new();
+            let mut params: Vec<(String, TypeKind, usize)> = func_def
+                .implict_params
+                .iter()
+                .map(|x| (x.name.clone().unwrap(), x.ty.clone(), 2))
+                .collect();
             for sym in &func_def.symbols {
                 let slot = match &sym.body {
                     Definition::Var(_) => {
@@ -203,8 +220,9 @@ impl Backend {
                         &mut symbols[sym.id]
                     }
                     Definition::Parameter(_) => {
-                        params.resize(sym.id + 1, ("".into(), TypeKind::Void, 0));
-                        &mut params[sym.id]
+                        let id = sym.id + func_def.implict_params.len();
+                        params.resize(id + 1, ("".into(), TypeKind::Void, 0));
+                        &mut params[id]
                     }
                     _ => continue,
                 };
@@ -216,8 +234,20 @@ impl Backend {
             }
 
             self.log(format!("Emitting fn {}:", func_def.name));
-            self.functions
-                .push(Function::new(func_def.name, params, symbols));
+            self.log(format!("Params: {:?}", params));
+            self.log(format!("Symbols: {:?}", symbols));
+            self.functions.push(Function::new(
+                func_def.name,
+                params,
+                symbols,
+                func_def
+                    .implict_params
+                    .iter()
+                    .filter(|x| x.param_ty == ImplicitParamType::ReturnPassthorugh)
+                    .collect::<Vec<&ImplicitParam>>()
+                    .len()
+                    > 0,
+            ));
             self.loc = (self.functions.len() - 1, 0);
 
             for (i, block) in func_def.body.iter().enumerate() {
@@ -260,7 +290,11 @@ impl Backend {
                 })
                 .collect::<Vec<Vec<Bytecode>>>();
 
-            let mut bytefn = Fn::new_with_blocks(fun.name.clone(), fun.params.len(), blocks);
+            let mut bytefn = Fn::new_with_blocks(
+                fun.name.clone(),
+                fun.params.iter().map(|x| x.2).collect(),
+                blocks,
+            );
             for (name, _, size) in &fun.symbols {
                 bytefn.add_symbol(name, *size);
             }
@@ -279,6 +313,12 @@ impl Backend {
 // ---------------------------------------------------------------------------
 
 impl Backend {
+    fn is_used_in_current_cmd(&self, virt_id: usize) -> bool {
+        self.next_use_map
+            .get(&virt_id)
+            .map_or(false, |uses| uses.iter().any(|&u| u == self.current_cmd_idx))
+    }
+
     fn build_next_use(block: &[Command]) -> HashMap<usize, Vec<usize>> {
         let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
         for (i, cmd) in block.iter().enumerate() {
@@ -336,7 +376,9 @@ impl Backend {
         let func_idx = self.loc.0;
         let check = |r: PhysReg| -> bool {
             if let Some(&owner) = self.functions[func_idx].phys_owners.get(&r) {
-                self.next_use_distance(owner) == usize::MAX && self.is_strictly_local(owner)
+                self.next_use_distance(owner) == usize::MAX
+                    && self.is_strictly_local(owner)
+                    && !self.is_used_in_current_cmd(owner)
             } else {
                 true
             }
@@ -582,7 +624,10 @@ impl Backend {
         let op_a = self.resolve_operand(a);
         let op_b = self.resolve_operand(b);
 
-        if !self.is_reg_free(dest) && !self.can_clobber(dest) {
+        if !self.is_reg_free(dest)
+            && !self.can_clobber(dest)
+            && !self.can_reuse_dest_owner(dest, a, b)
+        {
             self.spill(dest);
         }
 
@@ -597,6 +642,16 @@ impl Backend {
         self.free_op(a);
         self.free_op(b);
     }
+
+    fn can_reuse_dest_owner(&self, dest: PhysReg, a: &Value, b: &Value) -> bool {
+        let func_idx = self.loc.0;
+        let Some(owner) = self.functions[func_idx].phys_owners.get(&dest).copied() else {
+            return false;
+        };
+        let used_by_input = matches!(a, Value::Register(r) if r.id as usize == owner)
+            || matches!(b, Value::Register(r) if r.id as usize == owner);
+        used_by_input && self.next_use_distance(owner) == usize::MAX
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -606,11 +661,25 @@ impl Backend {
 impl Backend {
     fn ensure_reg(&mut self, virt_id: usize) -> PhysReg {
         let func_idx = self.loc.0;
-        match self.functions[func_idx].virt_locs.get(&virt_id).copied() {
-            Some(RegLoc::Physical(p)) => {
+        if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).copied() {
+            if self.functions[func_idx].phys_owners.get(&p).copied() == Some(virt_id) {
                 self.touch_reg(p);
-                p
+                return p;
             }
+            if let Some((&fixed_p, _)) = self.functions[func_idx]
+                .phys_owners
+                .iter()
+                .find(|(_, owner)| **owner == virt_id)
+            {
+                self.functions[func_idx]
+                    .virt_locs
+                    .insert(virt_id, RegLoc::Physical(fixed_p));
+                self.touch_reg(fixed_p);
+                return fixed_p;
+            }
+            self.functions[func_idx].virt_locs.remove(&virt_id);
+        }
+        match self.functions[func_idx].virt_locs.get(&virt_id).copied() {
             Some(RegLoc::Stack(offset)) => {
                 let ty = self.registers[virt_id].ty.clone();
                 let phys = self.allocate_reg(&ty, virt_id);
@@ -636,6 +705,7 @@ impl Backend {
                 self.functions[func_idx].stack_home.insert(virt_id, offset);
                 phys
             }
+            Some(RegLoc::Physical(_)) => unreachable!(),
             None => {
                 let ty = self.registers[virt_id].ty.clone();
                 let phys = self.allocate_reg(&ty, virt_id);
@@ -668,14 +738,25 @@ impl Backend {
             return clobberable;
         }
 
-        let &victim = candidates
+        let candidate_pool: Vec<PhysReg> = candidates
+            .iter()
+            .copied()
+            .filter(|r| !self.reg_has_current_use(*r))
+            .collect();
+        let pool: &[PhysReg] = if candidate_pool.is_empty() {
+            candidates
+        } else {
+            &candidate_pool
+        };
+
+        let &victim = pool
             .iter()
             .max_by_key(|&&r| {
                 let dist = self.phys_next_use_distance(r);
                 let lru = self.register_lru.get(&r).copied().unwrap_or(0);
                 (dist, usize::MAX - lru)
             })
-            .unwrap_or(&candidates[0]);
+            .unwrap_or(&pool[0]);
 
         self.spill(victim);
         self.claim_reg(victim, owner_id);
@@ -690,9 +771,50 @@ impl Backend {
 
     fn claim_reg(&mut self, reg: PhysReg, virt_id: usize) {
         let func = &mut self.functions[self.loc.0];
+        let aliases: Vec<PhysReg> = match reg {
+            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(reg).to_vec(),
+            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(reg).to_vec(),
+            _ => vec![reg],
+        };
+        for alias in aliases {
+            if let Some(prev_owner) = func.phys_owners.get(&alias).copied() {
+                if prev_owner != virt_id {
+                    if let Some(RegLoc::Physical(p)) = func.virt_locs.get(&prev_owner).copied() {
+                        if match reg {
+                            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => {
+                                Self::alias_group(reg).contains(&p)
+                            }
+                            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => {
+                                Self::alias_group(reg).contains(&p)
+                            }
+                            _ => p == alias,
+                        } {
+                            if let Some(&perm) = func.permanent_stack_slots.get(&prev_owner) {
+                                func.virt_locs.insert(prev_owner, RegLoc::Stack(perm));
+                            } else if let Some(&home) = func.stack_home.get(&prev_owner) {
+                                func.permanent_stack_slots.insert(prev_owner, home);
+                                func.virt_locs.insert(prev_owner, RegLoc::Stack(home));
+                            } else {
+                                func.virt_locs.remove(&prev_owner);
+                            }
+                        }
+                    }
+                }
+            }
+            func.phys_owners.remove(&alias);
+        }
         if let Some(RegLoc::Physical(old_phys)) = func.virt_locs.get(&virt_id).copied() {
-            if old_phys != reg && func.phys_owners.get(&old_phys).copied() == Some(virt_id) {
-                func.phys_owners.remove(&old_phys);
+            if old_phys != reg {
+                let old_aliases: Vec<PhysReg> = match old_phys {
+                    PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(old_phys).to_vec(),
+                    PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(old_phys).to_vec(),
+                    _ => vec![old_phys],
+                };
+                for a in old_aliases {
+                    if func.phys_owners.get(&a).copied() == Some(virt_id) {
+                        func.phys_owners.remove(&a);
+                    }
+                }
             }
         }
         func.phys_owners.insert(reg, virt_id);
@@ -700,13 +822,37 @@ impl Backend {
         self.touch_reg(reg);
     }
 
+    fn reg_has_current_use(&self, reg: PhysReg) -> bool {
+        let func_idx = self.loc.0;
+        let owner_used = |r: PhysReg| {
+            self.functions[func_idx]
+                .phys_owners
+                .get(&r)
+                .map_or(false, |owner| self.is_used_in_current_cmd(*owner))
+        };
+        match reg {
+            PhysReg::EX1 => owner_used(PhysReg::EX1) || owner_used(PhysReg::R2) || owner_used(PhysReg::R3),
+            PhysReg::EX2 => owner_used(PhysReg::EX2) || owner_used(PhysReg::R4) || owner_used(PhysReg::R5),
+            PhysReg::R2 | PhysReg::R3 => owner_used(reg) || owner_used(PhysReg::EX1),
+            PhysReg::R4 | PhysReg::R5 => owner_used(reg) || owner_used(PhysReg::EX2),
+            _ => owner_used(reg),
+        }
+    }
+
     fn release_reg(&mut self, virt_id: usize) {
         let func_idx = self.loc.0;
         if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).copied()
         {
-            if self.functions[func_idx].phys_owners.get(&p).copied() == Some(virt_id) {
-                self.functions[func_idx].phys_owners.remove(&p);
-                self.functions[func_idx].dirty_regs.remove(&p);
+            let aliases: Vec<PhysReg> = match p {
+                PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(p).to_vec(),
+                PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(p).to_vec(),
+                _ => vec![p],
+            };
+            for a in aliases {
+                if self.functions[func_idx].phys_owners.get(&a).copied() == Some(virt_id) {
+                    self.functions[func_idx].phys_owners.remove(&a);
+                    self.functions[func_idx].dirty_regs.remove(&a);
+                }
             }
             self.functions[func_idx].virt_locs.remove(&virt_id);
         }
@@ -791,11 +937,21 @@ impl Backend {
         self.functions[func_idx]
             .virt_locs
             .insert(owner_id, RegLoc::Stack(offset));
-        self.functions[func_idx].phys_owners.remove(&reg);
-        self.functions[func_idx].dirty_regs.remove(&reg);
+        let aliases: Vec<PhysReg> = match reg {
+            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(reg).to_vec(),
+            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(reg).to_vec(),
+            _ => vec![reg],
+        };
+        for a in aliases {
+            if self.functions[func_idx].phys_owners.get(&a).copied() == Some(owner_id) {
+                self.functions[func_idx].phys_owners.remove(&a);
+                self.functions[func_idx].dirty_regs.remove(&a);
+            }
+        }
     }
 
     fn emit_stack_addr(&mut self, offset: usize) {
+        //offset is realtive to regsave
         self.emit(Inst::OpCode(OpCode::Arithmetic(
             ArithmeticOp::Add,
             CommandType::I32,
@@ -826,15 +982,19 @@ impl Backend {
         self.emit(Inst::OpCode(OpCode::Memory(MemoryOp::Store, ty)));
         self.emit(Inst::PhysReg(PhysReg::EX1));
         self.emit(Inst::PhysReg(value_reg));
-        self.emit(Inst::OpCode(OpCode::Move(CommandType::I32)));
-        self.emit(Inst::PhysReg(PhysReg::EX2));
-        self.emit(Inst::PhysReg(PhysReg::EX1));
+        // Restore only when spilling EX1 itself. For R2/R3, EX1 contains address scratch,
+        // and restoring it here can clobber live pointer values.
+        if reg == PhysReg::EX1 {
+            self.emit(Inst::OpCode(OpCode::Move(CommandType::I32)));
+            self.emit(Inst::PhysReg(PhysReg::EX2));
+            self.emit(Inst::PhysReg(PhysReg::EX1));
+        }
         self.emit(Inst::OpCode(OpCode::Stack(StackOp::Pop, CommandType::I32)));
         self.emit(Inst::PhysReg(PhysReg::EX2));
     }
 
     fn emit_spill_general(&mut self, reg: PhysReg, ty: CommandType, offset: usize) {
-        let save_ex1 = !self.is_reg_free(PhysReg::EX1);
+        let save_ex1 = !self.is_reg_free(PhysReg::EX1) && reg != PhysReg::EX1;
         if save_ex1 {
             self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
             self.emit(Inst::PhysReg(PhysReg::EX1));
@@ -1104,12 +1264,9 @@ impl Backend {
             Inst::ARP => Bytecode::Register(CmdType::ARP),
             Inst::ArgCount => Bytecode::ArgCount(),
             Inst::SymbolSecLen => Bytecode::SymbolSectionLen(),
-            Inst::RestoreOffset => Bytecode::Int32(
-                fun.symbols
-                    .iter()
-                    .filter(|x| x.0 != "__internal_reg_save_463653961935601537679876958223")
-                    .map(|x| x.2)
-                    .sum::<usize>() as i32,
+            Inst::RestoreOffset => Bytecode::Symbol(
+                "__internal_reg_save_463653961935601537679876958223".to_string(),
+                0,
             ),
             Inst::Location(loc) => match loc {
                 ir::Location::Argument(name) => {

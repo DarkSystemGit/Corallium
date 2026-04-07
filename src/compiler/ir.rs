@@ -87,8 +87,8 @@ enum UserType {
     Enum(Vec<String>),
     Union(BTreeMap<String, TypeKind>),
 }
-#[derive(Debug, Clone)]
-enum ImplicitParamType {
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImplicitParamType {
     ReturnPassthorugh,
 }
 #[derive(Debug, Clone)]
@@ -354,6 +354,21 @@ impl IrGen {
         self.next_fn_id += 1;
         self.current_fn = self.next_fn_id - 1;
         self.push_scope();
+        let mut implict_params = Vec::new();
+        if self.is_internal_ptr(func.return_ty.clone()) {
+            implict_params.push(ImplicitParam {
+                name: Some(format!(
+                    ".sret_{}",
+                    rand::rng()
+                        .sample_iter(&Alphanumeric)
+                        .take(32)
+                        .map(|c| c as char)
+                        .collect::<String>()
+                )),
+                ty: self.unwrap_ptr_ty(func.return_ty.clone()).unwrap(),
+                param_ty: ImplicitParamType::ReturnPassthorugh,
+            });
+        }
         self.functions.push(Function {
             name: func.name.clone(),
             parameters: func.params.clone(),
@@ -366,7 +381,7 @@ impl IrGen {
             next_id: 0,
             next_param_id: 0,
             return_ty: func.return_ty,
-            implict_params: Vec::new(),
+            implict_params,
         });
         for (name, ty) in func.params.iter() {
             self.define_parameter(name.clone(), ty.clone());
@@ -730,26 +745,47 @@ impl IrGen {
                 Some(out)
             }
             Expression::FunctionCall(func, args) => {
-                let argc = args.len() as u8;
-                let args = args
-                    .into_iter()
-                    .rev()
-                    .map(|arg| {
-                        let reg = self.compile_expression(arg, loc).unwrap_or(Register {
-                            id: 0,
-                            ty: TypeKind::Void,
-                            start: [0, 0, 0],
-                            end: None,
-                        });
-                        self.emit_instruction(Command::Push(Value::Register(reg.clone())));
-                        self.deallocate_register(reg.id);
-                        reg.ty
-                    })
-                    .collect::<Vec<TypeKind>>();
                 let func = self.compile_expression(*func, loc);
                 if let Some(func) = func {
                     let (params, ret_ty) = self.unwrap_fn_type(func.ty.clone(), loc)?;
-                    let internalPtrRet = self.is_internal_ptr(ret_ty.clone())?;
+                    let mut sret_name = None;
+                    if self.is_internal_ptr(ret_ty.clone()) {
+                        sret_name = Some(format!(
+                            "__internal_ptr_{}",
+                            rand::rng()
+                                .sample_iter(&Alphanumeric)
+                                .take(32)
+                                .map(|c| c as char)
+                                .collect::<String>()
+                        ));
+                        self.define_var(
+                            sret_name.clone().unwrap(),
+                            self.unwrap_ptr_ty(ret_ty.clone())?,
+                        );
+                        let id = self.lookup_symbol((&sret_name.clone().unwrap()))?.id;
+                        let temp = self.alloc_get(ret_ty.clone())?;
+                        self.emit_instruction(Command::Add(
+                            Value::Location(Location::Symbol(id, 0)),
+                            Value::ARP,
+                            temp.clone(),
+                        ));
+                        self.emit_instruction(Command::Push(Value::Register(temp)));
+                    }
+                    let argc = args.len() as u8;
+                    let args = args
+                        .into_iter()
+                        .map(|arg| {
+                            let reg = self.compile_expression(arg, loc).unwrap_or(Register {
+                                id: 0,
+                                ty: TypeKind::Void,
+                                start: [0, 0, 0],
+                                end: None,
+                            });
+                            self.emit_instruction(Command::Push(Value::Register(reg.clone())));
+                            self.deallocate_register(reg.id);
+                            reg.ty
+                        })
+                        .collect::<Vec<TypeKind>>();
                     if params.len() as u8 != argc {
                         self.emitError(loc, "function call argument count mismatch");
                     }
@@ -764,12 +800,39 @@ impl IrGen {
                             );
                         }
                     });
-                    self.emit_instruction(Command::Call(Value::Register(func.clone()), argc));
+                    self.emit_instruction(Command::Call(
+                        Value::Register(func.clone()),
+                        argc + match self.is_internal_ptr(ret_ty.clone()) {
+                            true => 1,
+                            false => 0,
+                        },
+                    ));
                     self.deallocate_register(func.id);
                     if ret_ty != TypeKind::Void {
-                        let ret_reg = self.alloc_get(ret_ty.clone())?;
-                        self.emit_instruction(Command::Pop(ret_reg.clone()));
-                        return Some(ret_reg);
+                        match sret_name {
+                            Some(name) => match ret_ty {
+                                TypeKind::Optional(_) => {
+                                    let ret_reg = self.alloc_get(ret_ty.clone())?;
+                                    self.emit_instruction(Command::Pop(ret_reg.clone()));
+                                    return Some(ret_reg);
+                                }
+                                _ => {
+                                    let ret_reg = self.alloc_get(ret_ty.clone())?;
+                                    let id = self.lookup_symbol(&name)?.id;
+                                    self.emit_instruction(Command::Add(
+                                        Value::Location(Location::Symbol(id, 0)),
+                                        Value::ARP,
+                                        ret_reg.clone(),
+                                    ));
+                                    return Some(ret_reg);
+                                }
+                            },
+                            None => {
+                                let ret_reg = self.alloc_get(ret_ty.clone())?;
+                                self.emit_instruction(Command::Pop(ret_reg.clone()));
+                                return Some(ret_reg);
+                            }
+                        }
                     }
                     None
                 } else {
@@ -1228,14 +1291,14 @@ impl IrGen {
             }
         }
     }
-    fn is_internal_ptr(&self, ty: TypeKind) -> Option<bool> {
-        Some(match self.unwrap_ptr_ty(ty)? {
-            TypeKind::Array(_, _)
-            | TypeKind::Struct(_)
-            | TypeKind::Union(_)
-            | TypeKind::Optional(_) => true,
+    fn is_internal_ptr(&self, ty: TypeKind) -> bool {
+        if let TypeKind::Optional(_) = ty {
+            return true;
+        }
+        match self.unwrap_ptr_ty(ty) {
+            Some(TypeKind::Array(_, _) | TypeKind::Struct(_) | TypeKind::Union(_)) => true,
             _ => false,
-        })
+        }
     }
     fn compile_pattern(
         &mut self,
@@ -1740,8 +1803,134 @@ impl IrGen {
                 );
                 return None;
             }
-            self.emit_instruction(Command::Ret(Some(value)));
-            self.deallocate_register(output.id);
+            let return_ty = self.functions[self.current_fn].return_ty.clone();
+            if let TypeKind::Optional(op) = return_ty.clone() {
+                //if output is 0, just return 0, if not, fill implict param and return ptr to it
+                let copy = self.alloc_get(TypeKind::Bool)?;
+                self.emit_instruction(Command::Eq(
+                    value,
+                    Value::Immediate(Immediate {
+                        value: 0.0,
+                        ty: TypeKind::Optional(None),
+                    }),
+                    copy.clone(),
+                ));
+                self.emit_instruction(Command::JumpFalse(
+                    Location::None,
+                    Value::Register(copy.clone()),
+                ));
+                let copy_jump = self.get_last_jump_id();
+                self.emit_instruction(Command::Ret(Some(Value::Immediate(Immediate {
+                    value: 0.0,
+                    ty: TypeKind::Optional(None),
+                }))));
+                let nb = self.new_block();
+                self.update_jump(
+                    copy_jump,
+                    Command::JumpFalse(Location::Block(nb), Value::Register(copy.clone())),
+                );
+                let sizeof = self.size_of(self.unwrap_ptr_ty(return_ty.clone())?, loc)?;
+                let arg = self.alloc_get(TypeKind::Pointer(Box::new(return_ty.clone())))?;
+                let param_name = self.functions[self.current_fn]
+                    .implict_params
+                    .iter()
+                    .filter(|x| x.param_ty == ImplicitParamType::ReturnPassthorugh)
+                    .collect::<Vec<&ImplicitParam>>()[0]
+                    .name
+                    .clone()
+                    .unwrap();
+                self.emit_instruction(Command::Add(
+                    Value::ARP,
+                    Value::Location(Location::Argument(param_name)),
+                    arg.clone(),
+                ));
+                let wloc_base = self.alloc_get(return_ty.clone())?;
+                self.emit_instruction(Command::Load(
+                    Value::Register(arg.clone()),
+                    wloc_base.clone(),
+                ));
+                for i in 0..sizeof {
+                    let offset = Value::Immediate(Immediate {
+                        value: i as f64,
+                        ty: TypeKind::Int16,
+                    });
+                    let rloc = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Int16)))?;
+                    self.emit_instruction(Command::Add(
+                        offset.clone(),
+                        Value::Register(output.clone()),
+                        rloc.clone(),
+                    ));
+                    let byte = self.alloc_get(TypeKind::Int16)?;
+                    self.emit_instruction(Command::Load(Value::Register(rloc), byte.clone()));
+                    let wloc = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Int16)))?;
+                    self.emit_instruction(Command::Add(
+                        offset,
+                        Value::Register(wloc_base.clone()),
+                        wloc.clone(),
+                    ));
+                    self.emit_instruction(Command::Store(
+                        Value::Register(byte),
+                        Value::Register(wloc),
+                    ));
+                }
+                self.emit_instruction(Command::Ret(Some(Value::Register(wloc_base))));
+                return None;
+            }
+            match self.is_internal_ptr(return_ty.clone()) {
+                true => {
+                    let size_of = self.size_of(self.unwrap_ptr_ty(return_ty.clone())?, loc)?;
+                    let arg = self.alloc_get(TypeKind::Pointer(Box::new(return_ty.clone())))?;
+                    let param_name = self.functions[self.current_fn]
+                        .implict_params
+                        .iter()
+                        .filter(|x| x.param_ty == ImplicitParamType::ReturnPassthorugh)
+                        .collect::<Vec<&ImplicitParam>>()[0]
+                        .name
+                        .clone()
+                        .unwrap();
+                    self.emit_instruction(Command::Add(
+                        Value::ARP,
+                        Value::Location(Location::Argument(param_name)),
+                        arg.clone(),
+                    ));
+                    let sret = self.alloc_get(return_ty.clone())?;
+                    self.emit_instruction(Command::Load(
+                        Value::Register(arg.clone()),
+                        sret.clone(),
+                    ));
+                    for i in 0..size_of {
+                        let rloc = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Int16)))?;
+                        self.emit_instruction(Command::Add(
+                            Value::Register(output.clone()),
+                            Value::Immediate(Immediate {
+                                value: i as f64,
+                                ty: TypeKind::Int16,
+                            }),
+                            rloc.clone(),
+                        ));
+                        let temp = self.alloc_get(TypeKind::Int16)?;
+                        self.emit_instruction(Command::Load(Value::Register(rloc), temp.clone()));
+                        let wloc = self.alloc_get(TypeKind::Pointer(Box::new(TypeKind::Int16)))?;
+                        self.emit_instruction(Command::Add(
+                            Value::Register(sret.clone()),
+                            Value::Immediate(Immediate {
+                                value: i as f64,
+                                ty: TypeKind::Int16,
+                            }),
+                            wloc.clone(),
+                        ));
+                        self.emit_instruction(Command::Store(
+                            Value::Register(temp),
+                            Value::Register(wloc),
+                        ));
+                    }
+                    self.emit_instruction(Command::Ret(None))
+                }
+                false => {
+                    self.emit_instruction(Command::Ret(Some(value)));
+                    self.deallocate_register(output.id);
+                }
+            }
         } else {
             self.emit_instruction(Command::Ret(None));
         }

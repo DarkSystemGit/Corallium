@@ -66,6 +66,7 @@ pub fn run_cases() {
 }
 fn get_cases() -> Vec<TestCase> {
     let cases = vec![
+        comp_struct_ret(),
         comp_optional(),
         comp_arithmentic(),
         comp_loop(),
@@ -90,6 +91,7 @@ fn get_cases() -> Vec<TestCase> {
 //if
 // match
 // structs! & unions &Enums
+// optional!
 fn comp_optional() -> TestCase {
     TestCase::new(
         "CompilerOptionalType",
@@ -267,6 +269,30 @@ fn comp_func() -> TestCase {
         ),
     )
 }
+fn comp_struct_ret() -> TestCase {
+    TestCase::new(
+        "CompilerStructReturn",
+        TestType::Compiler(
+            r#"
+                struct Point{
+                    x:i16,
+                    y:i16
+                }
+                fn makePoint(x: i16,y:i16)->Point{
+                    return Point {x: x, y:y};
+                }
+                fn main() -> void {
+                    let p: Point=makePoint(10,20);
+                    p.x;
+                    p.y;
+                    return;
+                }
+
+                "#
+            .to_string(),
+        ),
+    )
+}
 fn stack_case(machine: &mut Machine) {
     machine
         .core
@@ -304,7 +330,7 @@ fn stack_case(machine: &mut Machine) {
 }
 fn gfx_case() -> TestCase {
     let mut exe = Executable::new();
-    let mut main_fn = Fn::new("main".to_string(), 0);
+    let mut main_fn = Fn::new("main".to_string(), vec![]);
     let atlas = exe.add_constant(vec![
         Data::Int(3),
         Data::Bytes(vec![0; 2 * 64]), //transparency
@@ -397,7 +423,7 @@ fn gfx_case() -> TestCase {
     }
 }
 fn orig_case() -> TestCase {
-    let mut main_fn = Fn::new("main".to_string(), 0);
+    let mut main_fn = Fn::new("main".to_string(), vec![]);
     let mut exe = Executable::new();
     let constant = exe.add_constant(vec![Data::Bytes(vec![-5, 0])]);
     let sound_file: Vec<i16> = load_wav(fs::read("sample.wav").unwrap().as_slice())
@@ -405,7 +431,7 @@ fn orig_case() -> TestCase {
         .flat_map(|x| convert_float(*x))
         .collect();
     let file_size = sound_file.len() as i32;
-    let mut another_fn = Fn::new("another_fn".to_string(), 0);
+    let mut another_fn = Fn::new("another_fn".to_string(), vec![]);
     let another_constant = exe.add_constant(vec![Data::Bytes(vec![1, 2])]);
     another_fn.add_block(
         vec![
@@ -432,7 +458,7 @@ fn orig_case() -> TestCase {
     );
     exe.add_fn(another_fn);
     let mut symbol_lib = Library::new("symbolLib".to_string());
-    let mut symbolfn = Fn::new("symbol".to_string(), 1);
+    let mut symbolfn = Fn::new("symbol".to_string(), vec![1]);
     symbolfn.add_symbol("testsymbol", 2);
     symbolfn.add_block(
         vec![
@@ -508,7 +534,7 @@ fn orig_case() -> TestCase {
     let sound_sample = test_lib.add_constant(vec![Data::Bytes(sound_file)]);
     test_lib.add_fn(Fn::new_with_blocks(
         "main".to_string(),
-        0,
+        vec![],
         vec![vec![
             Bytecode::Command(NOP),
             Bytecode::Command(PushEx),

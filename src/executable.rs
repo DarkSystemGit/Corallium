@@ -248,7 +248,7 @@ impl Executable {
         }
     }
     fn default_loader(max_loader_len: i16, header_len: i16) -> Vec<i16> {
-        let mut f = Fn::new("loader".to_string(), 0);
+        let mut f = Fn::new("loader".to_string(), vec![]);
         f.symbol_enabled = false;
         f.add_block(
             vec![
@@ -489,12 +489,12 @@ pub(crate) struct Fn {
     entrypoint: usize,
     id: usize,
     loc: usize,
-    arg_count: usize,
+    arg_count: Vec<usize>,
     symbol_table: SymbolTable,
     symbol_enabled: bool,
 }
 impl Fn {
-    pub(crate) fn new(name: String, args: usize) -> Fn {
+    pub(crate) fn new(name: String, args: Vec<usize>) -> Fn {
         Fn {
             name,
             blocks: vec![],
@@ -506,7 +506,7 @@ impl Fn {
             symbol_enabled: true,
         }
     }
-    pub fn new_with_blocks(name: String, args: usize, blocks: Vec<Vec<Bytecode>>) -> Fn {
+    pub fn new_with_blocks(name: String, args: Vec<usize>, blocks: Vec<Vec<Bytecode>>) -> Fn {
         let mut f = Fn {
             name,
             blocks: vec![],
@@ -607,13 +607,21 @@ impl Fn {
                         Bytecode::Symbol(name, offset) => {
                             let loc = self.symbol_table.get_symbol(name) as i32 + *offset;
                             if self.name != "main" {
-                                pack_i32(loc /*+ 2 + 2 + 5 + 4*/) //arp & return addr & registers r1-r5 then f1-f2
+                                pack_i32(loc + 2 + 2 + 5 + 4) //arp & return addr & registers r1-r5 then f1-f2
                             } else {
                                 pack_i32(loc)
                             }
                         }
-                        Argument(arg) => pack_i32((*arg as i32) - (self.arg_count as i32)),
-                        ArgCount() => pack_i32(self.arg_count as i32),
+                        Argument(arg) => pack_i32(
+                            -(self
+                                .arg_count
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| i >= arg)
+                                .map(|(_, x)| *x as i32)
+                                .sum::<i32>()),
+                        ),
+                        ArgCount() => pack_i32(self.arg_count.len() as i32),
                         HeapStart() => pack_i32((data_sec + consts.len()) as i32),
                     })
                     .collect::<Vec<Vec<i16>>>(),

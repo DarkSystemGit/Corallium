@@ -1,0 +1,14 @@
+enum Color{
+ Red,
+ Green,
+ Blue,
+ Null
+}
+fn makeColor(num: i16)->Color{
+    return match num{
+        0->Color::Red,
+        1->Color::Green,
+        2->Color::Blue,
+        _->Color::Null
+    };
+}

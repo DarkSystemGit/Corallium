@@ -3,6 +3,7 @@ use crate::devices::disk::Disk;
 use crate::devices::{Device, RawDevice};
 use crate::util::*;
 use prompted::input;
+use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use std::panic;
 use std::time::Instant;
@@ -1227,7 +1228,7 @@ impl Stack {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum CommandType {
     Add,
     Sub,

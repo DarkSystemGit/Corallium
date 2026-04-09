@@ -317,7 +317,7 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "try" => Some(KeywordKind::Try),
         "catch" => Some(KeywordKind::Catch),
         "Some" => Some(KeywordKind::Some),
-        "None" => Some(KeywordKind::Null),
+        "None" => Some(KeywordKind::None),
         _ => None,
     }
 }
@@ -484,7 +484,7 @@ pub enum KeywordKind {
     Defer,
     Try,
     Catch,
-    Null,
+    None,
     Some,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]

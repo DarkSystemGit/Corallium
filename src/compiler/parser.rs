@@ -1,8 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 
+use crate::compiler::ir::Header;
 use crate::compiler::lexer::{
     KeywordKind, Lexer, OperatorKind, SourceLocation, Token, TokenKind, TypeKind,
 };
+
+use super::ir::{Definition, Symbol};
 #[derive(Debug)]
 pub struct Parser {
     input: Vec<Token>,
@@ -10,6 +14,7 @@ pub struct Parser {
     src: String,
     file_name: String,
     type_table: TypeTable,
+    quiet: bool,
 }
 #[derive(Debug, Clone)]
 struct TypeTable {
@@ -139,6 +144,7 @@ pub struct Declaration {
 #[derive(Debug, Clone)]
 pub struct ImportDeclaration {
     pub path: String,
+    pub header: Header,
 }
 #[derive(Debug, Clone)]
 pub enum Expression {
@@ -165,7 +171,7 @@ pub enum Literal {
     Struct(String, HashMap<String, Expression>),
     Enum(String, String),
     Union(String, String, Box<Expression>),
-    Null,
+    None,
     Some(Box<Expression>),
 }
 #[derive(Debug, Clone)]
@@ -241,7 +247,7 @@ pub struct UnionDeclaration {
     pub variants: BTreeMap<String, TypeKind>,
 }
 impl Parser {
-    pub fn new(input: String, file_name: String) -> Self {
+    pub fn new(input: String, file_name: String, quiet: bool) -> Self {
         let mut lexer = Lexer::new(input.clone());
         let tokens = lexer.lex();
         Parser {
@@ -250,18 +256,21 @@ impl Parser {
             src: input,
             file_name,
             type_table: TypeTable::new(),
+            quiet,
         }
     }
-    pub fn parse(&mut self) -> Vec<Statement> {
+    pub fn parse(&mut self) -> (Vec<Statement>, Header) {
         let mut statements: Vec<Option<Statement>> = Vec::new();
         while self.pos < self.input.len() {
             statements.push(self.parseStatement());
         }
-        statements
+        let stmts = statements
             .iter()
             .filter(|x| x.is_some())
             .map(|x| x.clone().unwrap())
-            .collect()
+            .collect();
+        let header = self.gen_header(&stmts);
+        (stmts, header)
     }
     fn parseStatement(&mut self) -> Option<Statement> {
         match self.peek().kind {
@@ -444,9 +453,9 @@ impl Parser {
                 self.next();
                 Some(Pattern::Literal(Literal::Bool(b)))
             }
-            TokenKind::Keyword(KeywordKind::Null) => {
+            TokenKind::Keyword(KeywordKind::None) => {
                 self.next();
-                Some(Pattern::Literal(Literal::Null))
+                Some(Pattern::Literal(Literal::None))
             }
             TokenKind::Keyword(KeywordKind::Some) => {
                 self.next();
@@ -590,8 +599,36 @@ impl Parser {
         if let TokenKind::String(rpath) = &self.next().kind {
             let path = rpath.clone();
             self.matchToken(TokenKind::Semicolon)?;
+            let file = std::fs::read_to_string(path.clone()).expect("Invalid Import Path");
+            let import_name = Path::new(&path)
+                .file_name()
+                .expect("Invalid Import Path")
+                .to_str()
+                .unwrap()
+                .to_string();
+            let mut parser = Parser::new(file, import_name.clone(), true);
+            let header = parser.parse().1;
+            for i in header.symbols.iter() {
+                match &i.body {
+                    Definition::User(ty) => {
+                        self.type_table.insert(
+                            format!(
+                                "{}::{}",
+                                Path::new(&import_name).file_stem()?.display(),
+                                i.name.clone()
+                            ),
+                            match ty {
+                                super::ir::UserType::Enum(_) => UserType::Enum,
+                                super::ir::UserType::Struct(_) => UserType::Struct,
+                                super::ir::UserType::Union(_) => UserType::Union,
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
             Some(Statement {
-                kind: StatementKind::Import(ImportDeclaration { path }),
+                kind: StatementKind::Import(ImportDeclaration { path, header }),
                 loc,
             })
         } else {
@@ -740,7 +777,7 @@ impl Parser {
             TokenKind::Float(f) => Expression::Literal(Literal::Float(f)),
             TokenKind::String(s) => Expression::Literal(Literal::String(s)),
             TokenKind::Bool(b) => Expression::Literal(Literal::Bool(b)),
-            TokenKind::Keyword(KeywordKind::Null) => Expression::Literal(Literal::Null),
+            TokenKind::Keyword(KeywordKind::None) => Expression::Literal(Literal::None),
             TokenKind::Keyword(KeywordKind::Some) => {
                 self.matchToken(TokenKind::LeftParen)?;
                 let expr = self.parse_expr_bp(0)?;
@@ -1093,9 +1130,68 @@ impl Parser {
     }
     fn emitError(&self, message: &str) {
         let loc = self.input[self.pos].loc.get_src_loc(&self.src);
-        println!(
-            "Error while parsing at {} {}:{}:\n{}",
-            self.file_name, loc.line, loc.col, message
-        );
+        if !self.quiet {
+            println!(
+                "Error while parsing at {} {}:{}:\n{}",
+                self.file_name, loc.line, loc.col, message
+            );
+        }
+    }
+    fn gen_header(&self, statements: &Vec<Statement>) -> Header {
+        let mut symbols = vec![];
+        let mut fn_id = 0;
+        for statement in statements {
+            match &statement.kind {
+                StatementKind::Function(f) => {
+                    symbols.push(Symbol {
+                        name: f.name.clone(),
+                        body: Definition::Function(
+                            TypeKind::Function(
+                                f.params.values().map(|x| x.clone()).collect(),
+                                Box::new(f.return_ty.clone()),
+                            ),
+                            fn_id,
+                        ),
+                        id: 0,
+                        size: None,
+                    });
+                    fn_id += 1;
+                }
+                StatementKind::Struct(s) => {
+                    symbols.push(Symbol {
+                        name: s.name.clone(),
+                        body: Definition::User(super::ir::UserType::Struct(s.fields.clone())),
+                        id: 0,
+                        size: None,
+                    });
+                }
+                StatementKind::Union(u) => {
+                    symbols.push(Symbol {
+                        name: u.name.clone(),
+                        body: Definition::User(super::ir::UserType::Union(u.variants.clone())),
+                        id: 0,
+                        size: None,
+                    });
+                }
+                StatementKind::Enum(e) => {
+                    symbols.push(Symbol {
+                        name: e.name.clone(),
+                        body: Definition::User(super::ir::UserType::Enum(e.variants.clone())),
+                        id: 0,
+                        size: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        Header {
+            module: Path::new(&self.file_name)
+                .file_stem()
+                .expect("Invalid File Path")
+                .to_str()
+                .expect("Invalid File Path")
+                .to_string(),
+            symbols,
+        }
     }
 }

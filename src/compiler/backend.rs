@@ -2,7 +2,7 @@ use super::ir::{
     self, Command, Definition, Immediate, ImplicitParam, ImplicitParamType, IrGen, Output, Value,
 };
 use super::lexer::TypeKind;
-use crate::executable::{Bytecode, Executable, Fn};
+use crate::executable::{Bytecode, Executable, Fn, Library};
 use crate::vm::CommandType as CmdType;
 use std::collections::{BTreeMap, HashMap, HashSet};
 //DISCLAIMER:
@@ -112,6 +112,7 @@ pub struct Function {
     stack_home: HashMap<usize, usize>,
     permanent_stack_slots: HashMap<usize, usize>,
     pub sret: bool,
+    pub compile: bool,
 }
 
 impl Function {
@@ -120,6 +121,7 @@ impl Function {
         params: Vec<(String, TypeKind, usize)>,
         symbols: Vec<(String, TypeKind, usize)>,
         sret: bool,
+        compile: bool,
     ) -> Self {
         Self {
             name,
@@ -133,6 +135,7 @@ impl Function {
             stack_home: HashMap::new(),
             permanent_stack_slots: HashMap::new(),
             sret,
+            compile,
         }
     }
 }
@@ -247,6 +250,7 @@ impl Backend {
                     .collect::<Vec<&ImplicitParam>>()
                     .len()
                     > 0,
+                func_def.compile,
             ));
             self.loc = (self.functions.len() - 1, 0);
 
@@ -267,44 +271,48 @@ impl Backend {
                         *self.current_block_usage.entry(id).or_default() += 1;
                     });
                 }
-                for command in block {
-                    self.process_command(command);
-                    self.current_cmd_idx += 1;
+                if func_def.compile {
+                    for command in block {
+                        self.process_command(command);
+                        self.current_cmd_idx += 1;
+                    }
                 }
                 self.flush_registers();
             }
         }
     }
 
-    pub fn emit_bytecode(&mut self) -> Executable {
-        let mut exe = Executable::new();
+    pub fn emit_bytecode(&mut self) -> Vec<Fn> {
+        let mut fns = vec![];
         for fun in &self.functions {
-            let blocks = fun
-                .blocks
-                .iter()
-                .map(|block| {
-                    block
-                        .iter()
-                        .map(|inst| Self::lower_inst(inst, fun, &self.functions))
-                        .collect()
-                })
-                .collect::<Vec<Vec<Bytecode>>>();
+            if fun.compile {
+                let blocks = fun
+                    .blocks
+                    .iter()
+                    .map(|block| {
+                        block
+                            .iter()
+                            .map(|inst| Self::lower_inst(inst, fun, &self.functions))
+                            .collect()
+                    })
+                    .collect::<Vec<Vec<Bytecode>>>();
 
-            let mut bytefn = Fn::new_with_blocks(
-                fun.name.clone(),
-                fun.params.iter().map(|x| x.2).collect(),
-                blocks,
-            );
-            for (name, _, size) in &fun.symbols {
-                bytefn.add_symbol(name, *size);
+                let mut bytefn = Fn::new_with_blocks(
+                    fun.name.clone(),
+                    fun.params.iter().map(|x| x.2).collect(),
+                    blocks,
+                );
+                for (name, _, size) in &fun.symbols {
+                    bytefn.add_symbol(name, *size);
+                }
+                bytefn.add_symbol(
+                    "__internal_reg_save_463653961935601537679876958223",
+                    fun.stack_bytes,
+                );
+                fns.push(bytefn);
             }
-            bytefn.add_symbol(
-                "__internal_reg_save_463653961935601537679876958223",
-                fun.stack_bytes,
-            );
-            exe.add_fn(bytefn);
         }
-        exe
+        fns
     }
 }
 
@@ -314,9 +322,9 @@ impl Backend {
 
 impl Backend {
     fn is_used_in_current_cmd(&self, virt_id: usize) -> bool {
-        self.next_use_map
-            .get(&virt_id)
-            .map_or(false, |uses| uses.iter().any(|&u| u == self.current_cmd_idx))
+        self.next_use_map.get(&virt_id).map_or(false, |uses| {
+            uses.iter().any(|&u| u == self.current_cmd_idx)
+        })
     }
 
     fn build_next_use(block: &[Command]) -> HashMap<usize, Vec<usize>> {
@@ -661,7 +669,8 @@ impl Backend {
 impl Backend {
     fn ensure_reg(&mut self, virt_id: usize) -> PhysReg {
         let func_idx = self.loc.0;
-        if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).copied() {
+        if let Some(RegLoc::Physical(p)) = self.functions[func_idx].virt_locs.get(&virt_id).copied()
+        {
             if self.functions[func_idx].phys_owners.get(&p).copied() == Some(virt_id) {
                 self.touch_reg(p);
                 return p;
@@ -806,8 +815,12 @@ impl Backend {
         if let Some(RegLoc::Physical(old_phys)) = func.virt_locs.get(&virt_id).copied() {
             if old_phys != reg {
                 let old_aliases: Vec<PhysReg> = match old_phys {
-                    PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(old_phys).to_vec(),
-                    PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(old_phys).to_vec(),
+                    PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => {
+                        Self::alias_group(old_phys).to_vec()
+                    }
+                    PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => {
+                        Self::alias_group(old_phys).to_vec()
+                    }
                     _ => vec![old_phys],
                 };
                 for a in old_aliases {
@@ -831,8 +844,12 @@ impl Backend {
                 .map_or(false, |owner| self.is_used_in_current_cmd(*owner))
         };
         match reg {
-            PhysReg::EX1 => owner_used(PhysReg::EX1) || owner_used(PhysReg::R2) || owner_used(PhysReg::R3),
-            PhysReg::EX2 => owner_used(PhysReg::EX2) || owner_used(PhysReg::R4) || owner_used(PhysReg::R5),
+            PhysReg::EX1 => {
+                owner_used(PhysReg::EX1) || owner_used(PhysReg::R2) || owner_used(PhysReg::R3)
+            }
+            PhysReg::EX2 => {
+                owner_used(PhysReg::EX2) || owner_used(PhysReg::R4) || owner_used(PhysReg::R5)
+            }
             PhysReg::R2 | PhysReg::R3 => owner_used(reg) || owner_used(PhysReg::EX1),
             PhysReg::R4 | PhysReg::R5 => owner_used(reg) || owner_used(PhysReg::EX2),
             _ => owner_used(reg),

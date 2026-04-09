@@ -6,7 +6,12 @@ use crate::executable::Bytecode::{
 use crate::util::*;
 use crate::vm::CommandType;
 use crate::vm::CommandType::{Add, IO, Jump, Load, Mov, Push, R1, R2, R3};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::Path;
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Library {
     name: String,
     fns: Vec<Fn>,
@@ -20,6 +25,7 @@ impl Library {
             constants: vec![],
         }
     }
+
     pub fn add_constant(&mut self, constant: Vec<Data>) -> usize {
         self.constants.push(constant);
         self.constants.len() - 1
@@ -70,8 +76,18 @@ impl Library {
             lib.add_fn(func);
         }
     }
+    pub fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let encoded = bincode::serialize(self)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        fs::write(path, encoded)
+    }
+    pub fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let bytes = fs::read(path)?;
+        bincode::deserialize(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+    }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Symbol {
     name: String,
     size: usize,
@@ -81,7 +97,7 @@ impl Symbol {
         Symbol { name, size }
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SymbolTable {
     symbols: Vec<Symbol>,
 }
@@ -125,14 +141,14 @@ impl SymbolTable {
         ])
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Executable {
     constants: ConstantTable,
     fns: Vec<Fn>,
     loader: Vec<i16>,
     max_loader_len: i16,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Bytecode {
     Command(CommandType),
     Register(CommandType),
@@ -148,7 +164,7 @@ pub enum Bytecode {
     ArgCount(),
     HeapStart(),
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Data {
     Bytes(Vec<i16>),
     Float(f32),
@@ -165,7 +181,7 @@ fn get_data_len(data: &Data) -> usize {
         Data::ConstantLoc(_c) => 2,
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ConstantTable {
     data_sec: Vec<Vec<Data>>,
 }
@@ -246,6 +262,16 @@ impl Executable {
             loader: Self::default_loader(512, 6),
             max_loader_len: 512,
         }
+    }
+    pub(crate) fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let encoded = bincode::serialize(self)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        fs::write(path, encoded)
+    }
+    pub(crate) fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let bytes = fs::read(path)?;
+        bincode::deserialize(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
     }
     fn default_loader(max_loader_len: i16, header_len: i16) -> Vec<i16> {
         let mut f = Fn::new("loader".to_string(), vec![]);
@@ -482,7 +508,7 @@ impl Executable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Fn {
     name: String,
     blocks: Vec<Vec<Bytecode>>,

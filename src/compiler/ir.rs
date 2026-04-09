@@ -10,7 +10,13 @@ use crate::compiler::parser::{
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use std::collections::{BTreeMap, HashMap};
-use std::hash::Hash;
+use std::fs::{self, read_to_string};
+use std::path::Path;
+#[derive(Clone, Debug)]
+pub struct Header {
+    pub symbols: Vec<Symbol>,
+    pub module: String,
+}
 #[derive(Clone, Debug)]
 pub struct Register {
     pub id: u16,
@@ -82,7 +88,7 @@ pub enum Definition {
     Parameter(TypeKind),
 }
 #[derive(Clone, Debug)]
-enum UserType {
+pub enum UserType {
     Struct(BTreeMap<String, TypeKind>),
     Enum(Vec<String>),
     Union(BTreeMap<String, TypeKind>),
@@ -100,7 +106,6 @@ pub struct ImplicitParam {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub parameters: BTreeMap<String, TypeKind>,
     pub body: Vec<Vec<Command>>,
     jump_stack: Vec<[usize; 2]>,
     current_block: usize,
@@ -111,12 +116,15 @@ pub struct Function {
     pub symbols: Vec<Symbol>,
     pub return_ty: TypeKind,
     pub implict_params: Vec<ImplicitParam>,
+    pub compile: bool,
 }
 #[derive(Debug)]
 pub struct IrGen {
     input: Vec<Statement>,
+    header: Header,
     pub functions: Vec<Function>,
     pub imports: Vec<String>,
+    pub imported_symbols: Vec<Symbol>,
     file_path: String,
     current_fn: usize,
     emit: bool,
@@ -128,12 +136,13 @@ pub struct IrGen {
 }
 impl IrGen {
     pub fn new(filename: &str, input: String) -> Self {
-        let mut parser = Parser::new(input, filename.to_string());
+        let mut parser = Parser::new(input, filename.to_string(), false);
+        let parse = parser.parse();
         IrGen {
-            input: parser.parse(),
+            input: parse.0,
+            header: parse.1,
             functions: vec![Function {
                 name: "_start".to_string(),
-                parameters: BTreeMap::new(),
                 body: vec![vec![]],
                 jump_stack: Vec::new(),
                 current_block: 0,
@@ -144,6 +153,7 @@ impl IrGen {
                 next_param_id: 0,
                 return_ty: TypeKind::Void,
                 implict_params: Vec::new(),
+                compile: false,
             }],
             defer_stack: Vec::new(),
             imports: Vec::new(),
@@ -154,6 +164,61 @@ impl IrGen {
             next_fn_id: 1,
             registers: Vec::new(),
             next_reg: 0,
+            imported_symbols: Vec::new(),
+        }
+    }
+    fn incorperate_header(&mut self, header: Header, loc: SourceLocation) {
+        let fn_base = self.next_fn_id;
+        for sym in header.symbols {
+            match sym.body {
+                Definition::Function(ty, id) => {
+                    self.define_function(
+                        format!("{}::{}", header.module, sym.name),
+                        ty.clone(),
+                        id + fn_base,
+                    );
+                    let mut implict_params = Vec::new();
+                    let rty = match ty {
+                        TypeKind::Function(_, r) => *r,
+                        _ => unreachable!(),
+                    };
+                    if self.is_internal_ptr(rty.clone()) {
+                        implict_params.push(ImplicitParam {
+                            name: Some(format!(
+                                ".sret_{}",
+                                rand::rng()
+                                    .sample_iter(&Alphanumeric)
+                                    .take(32)
+                                    .map(|c| c as char)
+                                    .collect::<String>()
+                            )),
+                            ty: self.unwrap_ptr_ty(rty.clone()).unwrap(),
+                            param_ty: ImplicitParamType::ReturnPassthorugh,
+                        });
+                    }
+                    self.functions.push(Function {
+                        name: format!("{}::{}", header.module, sym.name),
+                        body: vec![],
+                        jump_stack: vec![],
+                        current_block: 0,
+                        loop_stack: vec![],
+                        loop_patches: HashMap::new(),
+                        next_id: 0,
+                        next_param_id: 0,
+                        symbols: vec![],
+                        return_ty: rty,
+                        implict_params,
+                        compile: false,
+                    });
+                    self.next_fn_id += 1;
+                }
+                Definition::User(userty) => {
+                    self.define_user_type(format!("{}::{}", header.module, sym.name), userty);
+                }
+                _ => {
+                    self.emitError(loc, "Global variables are not supported");
+                }
+            }
         }
     }
     fn get_next_symbol_id(&mut self) -> usize {
@@ -259,6 +324,9 @@ impl IrGen {
                 return Some(symbol);
             }
         }
+        if let Some(symbol) = self.imported_symbols.iter().find(|s| s.name == name) {
+            return Some(symbol);
+        }
         None
     }
     pub fn compile(&mut self) {
@@ -319,6 +387,7 @@ impl IrGen {
                 self.compile_function(fun, statement.loc);
             }
             StatementKind::Import(import) => {
+                self.incorperate_header(import.header, statement.loc);
                 self.imports.push(import.path);
             }
             StatementKind::Struct(decl) => {
@@ -371,7 +440,6 @@ impl IrGen {
         }
         self.functions.push(Function {
             name: func.name.clone(),
-            parameters: func.params.clone(),
             body: vec![vec![]],
             jump_stack: vec![],
             current_block: 0,
@@ -382,6 +450,7 @@ impl IrGen {
             next_param_id: 0,
             return_ty: func.return_ty,
             implict_params,
+            compile: true,
         });
         for (name, ty) in func.params.iter() {
             self.define_parameter(name.clone(), ty.clone());
@@ -946,7 +1015,7 @@ impl IrGen {
     }
     fn compile_literal(&mut self, lit: Literal, loc: SourceLocation) -> Option<Output> {
         match lit {
-            Literal::Null => {
+            Literal::None => {
                 let out = self.alloc_get(TypeKind::Optional(None))?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {

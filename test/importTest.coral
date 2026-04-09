@@ -1,0 +1,6 @@
+import "imported.coral";
+fn main()->void{
+    let color: imported::Color=imported::makeColor(2);
+    color;
+    return;
+}

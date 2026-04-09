@@ -596,13 +596,22 @@ impl Parser {
     fn parseImportDeclaration(&mut self) -> Option<Statement> {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
+        let file_name = self.file_name.clone();
         if let TokenKind::String(rpath) = &self.next().kind {
-            let path = rpath.clone();
+            let mut ancestors = Path::new(&file_name).ancestors();
+            ancestors.next();
+            let path = ancestors
+                .next()?
+                .join(&(rpath.clone()))
+                .to_str()
+                .unwrap()
+                .to_string();
             self.matchToken(TokenKind::Semicolon)?;
-            let file = std::fs::read_to_string(path.clone()).expect("Invalid Import Path");
+            let file = std::fs::read_to_string(path.clone())
+                .expect(&format!("Invalid import path: {}", &path));
             let import_name = Path::new(&path)
                 .file_name()
-                .expect("Invalid Import Path")
+                .expect(&format!("Invalid import path: {}", &path))
                 .to_str()
                 .unwrap()
                 .to_string();

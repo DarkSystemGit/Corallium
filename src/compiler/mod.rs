@@ -28,7 +28,7 @@ pub fn compile_file(path: &str) -> Option<Executable> {
         match Path::new(&import).extension()?.to_str()? == "h" {
             true => {
                 let mut asm_path = PathBuf::from(&import);
-                asm_path.set_extension(".bin");
+                asm_path.set_extension("bin");
                 let lib = Library::from_file(asm_path.clone())
                     .expect(&format!("Failed to read path {}", asm_path.display()));
                 imports.push(lib);

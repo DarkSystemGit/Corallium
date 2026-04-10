@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::path::Path;
 
 use crate::compiler::ir::Header;
@@ -227,14 +228,14 @@ pub struct ReturnStatement {
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
     pub name: String,
-    pub params: BTreeMap<String, TypeKind>,
+    pub params: IndexMap<String, TypeKind>,
     pub return_ty: TypeKind,
     pub body: Box<Statement>,
 }
 #[derive(Debug, Clone)]
 pub struct StructDeclaration {
     pub name: String,
-    pub fields: BTreeMap<String, TypeKind>,
+    pub fields: IndexMap<String, TypeKind>,
 }
 #[derive(Debug, Clone)]
 pub struct EnumDeclaration {
@@ -244,7 +245,7 @@ pub struct EnumDeclaration {
 #[derive(Debug, Clone)]
 pub struct UnionDeclaration {
     pub name: String,
-    pub variants: BTreeMap<String, TypeKind>,
+    pub variants: IndexMap<String, TypeKind>,
 }
 impl Parser {
     pub fn new(input: String, file_name: String, quiet: bool) -> Self {
@@ -526,7 +527,7 @@ impl Parser {
         let name = self.matchIdentifier()?;
         self.type_table.insert(name.clone(), UserType::Struct);
         self.matchToken(TokenKind::LeftBrace)?;
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         while self.peek().kind != TokenKind::RightBrace {
             let field_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -548,7 +549,7 @@ impl Parser {
         let name = self.matchIdentifier()?;
         self.type_table.insert(name.clone(), UserType::Union);
         self.matchToken(TokenKind::LeftBrace)?;
-        let mut variants = BTreeMap::new();
+        let mut variants = IndexMap::new();
         while self.peek().kind != TokenKind::RightBrace {
             let variant_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -569,7 +570,7 @@ impl Parser {
         let loc = self.next().loc.get_src_loc(src);
         let name = self.matchIdentifier()?;
         self.matchToken(TokenKind::LeftParen)?;
-        let mut params = BTreeMap::new();
+        let mut params = IndexMap::new();
         while self.peek().kind != TokenKind::RightParen {
             let param_name = self.matchIdentifier()?;
             self.matchToken(TokenKind::Colon)?;
@@ -615,7 +616,8 @@ impl Parser {
                 .to_str()
                 .unwrap()
                 .to_string();
-            let mut parser = Parser::new(file, import_name.clone(), true);
+            let is_header = Path::new(&path).extension()? == ".h";
+            let mut parser = Parser::new(file, import_name.clone(), !is_header);
             let header = parser.parse().1;
             for i in header.symbols.iter() {
                 match &i.body {
@@ -920,7 +922,7 @@ impl Parser {
                 OperatorKind::Ampersand => Some((50, 51)),
                 OperatorKind::Xor => Some((40, 41)),
                 OperatorKind::Or => Some((30, 31)),
-                OperatorKind::Dot => Some((100, 0)),
+                OperatorKind::Dot => Some((100, 101)),
                 OperatorKind::Eq
                 | OperatorKind::Neq
                 | OperatorKind::Lt
@@ -1077,9 +1079,13 @@ impl Parser {
             TokenKind::LeftBracket => {
                 self.next();
                 let content = self.matchType()?;
-                self.matchToken(TokenKind::Semicolon);
-                let count = self.matchInteger()? as usize;
-                self.matchToken(TokenKind::RightBracket);
+                let count = if self.peek().kind == TokenKind::Semicolon {
+                    self.next();
+                    self.matchInteger()? as usize
+                } else {
+                    usize::MAX
+                };
+                self.matchToken(TokenKind::RightBracket)?;
                 Some(TypeKind::Pointer(Box::new(TypeKind::Array(
                     Box::new(content),
                     count,
@@ -1190,6 +1196,7 @@ impl Parser {
                         size: None,
                     });
                 }
+
                 _ => {}
             }
         }

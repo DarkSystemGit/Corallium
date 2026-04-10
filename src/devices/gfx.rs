@@ -115,7 +115,6 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 let lp = get_gs(machine, device_id).ptrs.layers[lpc];
                 load_layer(lp, machine, device_id, scanlines);
             }
-
             get_gs(machine, device_id).render();
             if !get_gs(machine, device_id).display.is_open() {
                 machine.on = false;

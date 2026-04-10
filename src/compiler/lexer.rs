@@ -343,7 +343,12 @@ fn get_type(ident: &String, loc: &Location) -> Option<TypeKind> {
                 length,
             ))));
         } else {
-            None
+            let inner_type_str = content.trim().to_string();
+            let inner_type = get_type(&inner_type_str, loc)?;
+            return Some(TypeKind::Pointer(Box::new(TypeKind::Array(
+                Box::new(inner_type),
+                usize::MAX,
+            ))));
         }
     } else {
         match ident.as_str() {
@@ -538,11 +543,13 @@ impl PartialEq for TypeKind {
             },
             (TypeKind::Pointer(a), TypeKind::Pointer(b)) => a == b,
             (TypeKind::Array(ty_a, size_a), TypeKind::Array(ty_b, size_b)) => {
-                ty_a == ty_b && size_a == size_b
+                ty_a == ty_b && (*size_a == usize::MAX || *size_b == usize::MAX || size_a == size_b)
             }
             (TypeKind::Function(params_a, ret_a), TypeKind::Function(params_b, ret_b)) => {
                 params_a == params_b && ret_a == ret_b
             }
+            (TypeKind::Pointer(_), TypeKind::Optional(None)) => true,
+            (TypeKind::Optional(None), TypeKind::Pointer(_)) => true,
             _ => discriminant(self) == discriminant(other),
         }
     }
@@ -559,7 +566,13 @@ impl Display for TypeKind {
             TypeKind::Void => write!(f, "void"),
             TypeKind::Bool => write!(f, "bool"),
             TypeKind::Pointer(ty) => write!(f, "*{}", ty),
-            TypeKind::Array(ty, size) => write!(f, "[{}; {}]", ty, size),
+            TypeKind::Array(ty, size) => {
+                if *size == usize::MAX {
+                    write!(f, "[{}]", ty)
+                } else {
+                    write!(f, "[{}; {}]", ty, size)
+                }
+            }
             TypeKind::Struct(name) => write!(f, "struct {}", name),
             TypeKind::Union(name) => write!(f, "union {}", name),
             TypeKind::Enum(name) => write!(f, "enum {}", name),

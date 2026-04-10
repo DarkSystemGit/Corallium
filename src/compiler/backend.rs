@@ -4,7 +4,8 @@ use super::ir::{
 use super::lexer::TypeKind;
 use crate::executable::{Bytecode, Executable, Fn, Library};
 use crate::vm::CommandType as CmdType;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use indexmap::IndexMap;
+use std::collections::{HashMap, HashSet};
 //DISCLAIMER:
 //The register allocation code in this file is mostly ai-generated(gemini&claude), due to my lack of knowlage on the subject.
 // I regert using AI, as it prob mad me spend more time than I need to debugging, but oh well.
@@ -105,8 +106,8 @@ pub struct Function {
     pub params: Vec<(String, TypeKind, usize)>,
     pub symbols: Vec<(String, TypeKind, usize)>,
     pub blocks: Vec<Vec<Inst>>,
-    virt_locs: BTreeMap<usize, RegLoc>,
-    phys_owners: BTreeMap<PhysReg, usize>,
+    virt_locs: IndexMap<usize, RegLoc>,
+    phys_owners: IndexMap<PhysReg, usize>,
     dirty_regs: HashSet<PhysReg>,
     stack_bytes: usize,
     stack_home: HashMap<usize, usize>,
@@ -128,8 +129,8 @@ impl Function {
             params,
             symbols,
             blocks: Vec::new(),
-            virt_locs: BTreeMap::new(),
-            phys_owners: BTreeMap::new(),
+            virt_locs: IndexMap::new(),
+            phys_owners: IndexMap::new(),
             dirty_regs: HashSet::new(),
             stack_bytes: 0,
             stack_home: HashMap::new(),

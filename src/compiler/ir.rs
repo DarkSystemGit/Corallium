@@ -7,9 +7,10 @@ use crate::compiler::lexer::{SourceLocation, TypeKind};
 use crate::compiler::parser::{
     Declaration, Expression, FunctionDeclaration, Literal, Parser, Statement, StatementKind,
 };
+use indexmap::IndexMap;
 use rand::Rng;
 use rand::distr::Alphanumeric;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs::{self, read_to_string};
 use std::path::Path;
 #[derive(Clone, Debug)]
@@ -89,9 +90,9 @@ pub enum Definition {
 }
 #[derive(Clone, Debug)]
 pub enum UserType {
-    Struct(BTreeMap<String, TypeKind>),
+    Struct(IndexMap<String, TypeKind>),
     Enum(Vec<String>),
-    Union(BTreeMap<String, TypeKind>),
+    Union(IndexMap<String, TypeKind>),
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImplicitParamType {
@@ -613,6 +614,8 @@ impl IrGen {
                                         );
                                     }
                                 } else {
+                                    //we got a problemo, we cant assign
+
                                     self.emitError(loc, "Invalid property access");
                                 }
                             } else {
@@ -1101,9 +1104,11 @@ impl IrGen {
                         .collect::<String>()
                 );
                 self.emit = false;
-                let tempty = self.compile_expression(arr[0].clone(), loc);
+                let ty = match arr.get(0) {
+                    Some(elm) => self.compile_expression(elm.clone(), loc)?.ty,
+                    None => TypeKind::Void,
+                };
                 self.emit = true;
-                let ty = tempty?.ty;
                 let size = self.size_of(ty.clone(), loc.clone())?;
                 self.define_var(
                     name.clone(),
@@ -1747,46 +1752,71 @@ impl IrGen {
             }
             Expression::Binary(lhs, op, rhs) => match op {
                 BinaryOperator::PropertyAccess => {
-                    let addr = self.compile_place_expr(*lhs, loc)?;
-                    if let Some(TypeKind::Struct(name)) = self.unwrap_ptr_ty(addr.ty.clone()) {
-                        let sym = self.lookup_symbol(&name)?.clone();
-                        if let Definition::User(UserType::Struct(fields)) = sym.body {
-                            if let Expression::Identifier(prop) = *rhs {
-                                let fieldTy = fields.get(&prop).clone();
-                                if let Some(fieldTy) = fieldTy {
-                                    // FIX: only sum fields that come before `prop`,
-                                    // not all fields (which would give total struct size).
-                                    let offset = fields.keys().take_while(|k| *k != &prop).fold(
-                                        0,
-                                        |acc, k| {
-                                            acc + self.size_of(fields[k].clone(), loc).expect(
-                                                "INTERNAL ERROR: Failed to calculate size of type",
-                                            )
-                                        },
-                                    );
-                                    let reg = self
-                                        .alloc_get(TypeKind::Pointer(Box::new(fieldTy.clone())))?;
-                                    self.emit_instruction(Command::Add(
-                                        Value::Immediate(Immediate {
-                                            value: offset as f64,
-                                            ty: TypeKind::Int32,
-                                        }),
-                                        Value::Register(addr),
-                                        reg.clone(),
-                                    ));
-                                    return Some(reg);
-                                } else {
-                                    self.emitError(
-                                        loc,
-                                        &format!("No such property {} on struct {}", prop, name),
-                                    );
-                                }
+                    let base = self.compile_place_expr(*lhs, loc)?;
+                    let (addr, name) = match self.unwrap_ptr_ty(base.ty.clone()) {
+                        Some(TypeKind::Struct(name)) => (base, name),
+                        Some(TypeKind::Pointer(inner)) => {
+                            if let TypeKind::Struct(name) = *inner {
+                                // `base` points to a variable slot that stores `*Struct`.
+                                // Load once to get the actual struct base pointer.
+                                let loaded = self.alloc_get(TypeKind::Pointer(Box::new(
+                                    TypeKind::Struct(name.clone()),
+                                )))?;
+                                self.emit_instruction(Command::Load(
+                                    Value::Register(base),
+                                    loaded.clone(),
+                                ));
+                                (loaded, name)
                             } else {
-                                self.emitError(loc, "Invalid property expression");
+                                self.emitError(
+                                    loc,
+                                    "Cannot access property of non-struct pointer type",
+                                );
+                                return None;
+                            }
+                        }
+                        _ => {
+                            self.emitError(loc, "Cannot access property of non-struct type");
+                            return None;
+                        }
+                    };
+                    let sym = self.lookup_symbol(&name)?.clone();
+                    if let Definition::User(UserType::Struct(fields)) = sym.body {
+                        if let Expression::Identifier(prop) = *rhs {
+                            let fieldTy = fields.get(&prop).clone();
+                            if let Some(fieldTy) = fieldTy {
+                                // FIX: only sum fields that come before `prop`,
+                                // not all fields (which would give total struct size).
+                                let offset = fields.keys().take_while(|k| *k != &prop).fold(
+                                    0,
+                                    |acc, k| {
+                                        acc + self.size_of(fields[k].clone(), loc).expect(
+                                            "INTERNAL ERROR: Failed to calculate size of type",
+                                        )
+                                    },
+                                );
+                                let reg =
+                                    self.alloc_get(TypeKind::Pointer(Box::new(fieldTy.clone())))?;
+                                self.emit_instruction(Command::Add(
+                                    Value::Immediate(Immediate {
+                                        value: offset as f64,
+                                        ty: TypeKind::Int32,
+                                    }),
+                                    Value::Register(addr),
+                                    reg.clone(),
+                                ));
+                                return Some(reg);
+                            } else {
+                                self.emitError(
+                                    loc,
+                                    &format!("No such property {} on struct {}", prop, name),
+                                );
                             }
                         } else {
-                            self.emitError(loc, &format!("No such struct {}", name));
+                            self.emitError(loc, "Invalid property expression");
                         }
+                    } else {
+                        self.emitError(loc, &format!("No such struct {}", name));
                     }
                     None
                 }
@@ -1826,7 +1856,7 @@ impl IrGen {
         return match r.is_some() {
             true => r,
             false => {
-                self.emitError(loc, "Invalid Place Expression");
+                self.emitError(loc, "Invalid place expression");
                 None
             }
         };
@@ -2253,7 +2283,14 @@ impl IrGen {
             TypeKind::Char => Some(1),
             TypeKind::Float32 => Some(2),
             TypeKind::Pointer(_) => Some(2),
-            TypeKind::Array(aty, size) => Some(size * self.size_of(*aty, loc)?),
+            TypeKind::Array(aty, size) => {
+                if size == usize::MAX {
+                    self.emitError(loc, "Cannot take size of unsized array");
+                    None
+                } else {
+                    Some(size * self.size_of(*aty, loc)?)
+                }
+            }
             TypeKind::Struct(name) => {
                 let struct_def = self.lookup_symbol(&name)?;
                 if let Definition::User(UserType::Struct(fields)) = &struct_def.body {

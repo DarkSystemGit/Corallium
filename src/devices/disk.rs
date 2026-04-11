@@ -1,19 +1,35 @@
 use crate::devices::RawDevice;
 use crate::util::pop_stack;
 use crate::vm::Machine;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io;
+use std::path::Path;
 pub type Disk = Vec<DiskSection>;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskSection {
     pub section_type: DiskSectionType,
     pub data: Vec<i16>,
     pub id: i16,
 }
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum DiskSectionType {
     Entrypoint,
     Libary,
     Code,
     Data,
+}
+
+pub fn save_disk<P: AsRef<Path>>(disk: &Disk, path: P) -> io::Result<()> {
+    let encoded = bincode::serialize(disk)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+    fs::write(path, encoded)
+}
+
+pub fn load_disk<P: AsRef<Path>>(path: P) -> io::Result<Disk> {
+    let bytes = fs::read(path)?;
+    bincode::deserialize(&bytes)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
 }
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     let disk = if let RawDevice::Disk(disk) = &mut machine.devices[device_id].contents {

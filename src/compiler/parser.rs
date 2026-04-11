@@ -759,14 +759,38 @@ impl Parser {
 
     fn parseArray(&mut self) -> Option<Expression> {
         let mut elements = Vec::new();
-        while !(self.peek().kind == TokenKind::RightBracket) {
-            elements.push(self.parseExpression()?);
+        if self.peek().kind == TokenKind::RightBracket {
+            self.matchToken(TokenKind::RightBracket)?;
+            return Some(Expression::Literal(Literal::Array(elements)));
+        }
+
+        let first = self.parseExpression()?;
+        if self.peek().kind == TokenKind::Semicolon {
+            self.next();
+            let count_expr = self.parseExpression()?;
+            let count = match count_expr {
+                Expression::Literal(Literal::Int(i)) if i >= 0 => i as usize,
+                _ => {
+                    self.emitError("Expected non-negative integer literal in [value; count]");
+                    return None;
+                }
+            };
+            self.matchToken(TokenKind::RightBracket)?;
+            elements.resize(count, first);
+            return Some(Expression::Literal(Literal::Array(elements)));
+        }
+
+        elements.push(first);
+        while self.peek().kind != TokenKind::RightBracket {
             if self.peek().kind == TokenKind::Comma {
                 self.next();
-            } else if self.peek().kind == TokenKind::RightBracket {
-                break;
+                if self.peek().kind == TokenKind::RightBracket {
+                    break;
+                }
+                elements.push(self.parseExpression()?);
             } else {
                 self.emitError("Expected ',' or ']' after array element");
+                return None;
             }
         }
         self.matchToken(TokenKind::RightBracket)?;

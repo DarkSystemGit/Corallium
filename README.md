@@ -15,13 +15,37 @@ This repository contains a Coral Compiler, an executable/linking layer, and the 
 ### Run a Coral program
 
 ```bash
-cargo run -- test/importTest.coral
+cargo run -- --run --file test/importTest.coral
 ```
 
 Enable the runtime debugger:
 
 ```bash
-cargo run -- test/importTest.coral --debug
+cargo run -- --run --file test/importTest.coral --debug
+```
+
+Compile to a serialized disk image (`.cart`):
+
+```bash
+cargo run -- --compile --file test/importTest.coral
+```
+
+Link one or more extra files into the disk image:
+
+```bash
+cargo run -- --compile --file test/importTest.coral --link path/to/file1 path/to/file2
+```
+
+Run from a serialized disk image:
+
+```bash
+cargo run -- --bytecode --file test/importTest.cart
+```
+
+Show CLI help:
+
+```bash
+cargo run -- --help
 ```
 
 ## Coral language
@@ -76,6 +100,7 @@ Graphics control mapping:
 
 - `import "module.coral";` loads Coral source modules relative to the importing file
 - Importing a `.h` path loads symbols from the header and links a matching precompiled `.bin` library
+- `disk::linkedFileStart()` returns the first sector after executable code/data, useful for reading files linked with `--link`
 
 ## Project layout
 

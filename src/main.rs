@@ -29,6 +29,7 @@ fn compile() {
     let mut machine = Machine::new(debug);
     machine.set_disk(disk);
     machine.run();
+    //machine.dump_state();
 }
 fn main() {
     let map: HashMap<&'static str, fn()> = HashMap::from([

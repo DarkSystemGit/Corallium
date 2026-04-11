@@ -421,6 +421,7 @@ pub struct GraphicsSystem {
     display: Display,
     controls: Vec<Controls>,
     ptrs: GraphicsPtrs,
+    queuedPixels: Vec<(usize, usize, u32)>,
 }
 #[derive(Debug, Clone)]
 struct GraphicsPtrs {
@@ -469,7 +470,7 @@ impl GraphicsSystem {
                 resolution[0] as usize,
                 resolution[1] as usize,
                 "Micro-16",
-                61,
+                65,
                 Scale::X4,
             ),
             controls: Vec::new(),
@@ -478,6 +479,7 @@ impl GraphicsSystem {
                 layers: vec![],
                 atlas: 0,
             },
+            queuedPixels: vec![],
         };
         gs.background_layers.extend([
             BGLayer::new(TileMap::new(
@@ -514,7 +516,7 @@ impl GraphicsSystem {
         self.atlas.borrow_mut().tiles[id as usize] = tile;
     }
     pub fn set_pixel(&mut self, x: usize, y: usize, color: u32) {
-        self.display.buffer[y * self.display.width + x] = color;
+        self.queuedPixels.push((x, y, color));
     }
     pub fn get_pixel(&mut self, x: usize, y: usize) -> u32 {
         self.display.buffer[y * self.display.width + x]
@@ -562,6 +564,9 @@ impl GraphicsSystem {
                     self.display.width as u32,
                 );
             }
+        }
+        for pix in self.queuedPixels.drain(..) {
+            self.display.buffer[pix.1 * self.display.width + pix.0] = pix.2;
         }
         self.display.render();
         self.controls.clear();

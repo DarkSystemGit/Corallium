@@ -63,6 +63,7 @@ Device I/O is invoked as `IO(device_id, command_id)`, with command arguments pas
 | `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound` |
 | `2` | Clock | `0=read` |
 | `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel` |
+| `4` | Serial | `0=write (null-terminated string ptr)`, `1=writeNum (i32)` |
 
 Graphics control mapping:
 
@@ -81,5 +82,5 @@ Graphics control mapping:
 - `src/compiler/` - Coral frontend, AST, IR generation, and backend lowering
 - `src/executable.rs` - bytecode/function packing, constants, disk image build
 - `src/vm.rs` - VM execution engine, stack/memory model, debug console
-- `src/devices/` - disk, audio, clock, and graphics drivers
+- `src/devices/` - disk, audio, clock, graphics, and serial drivers
 - `test/` - small Coral import examples

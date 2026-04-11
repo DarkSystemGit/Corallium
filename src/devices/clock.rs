@@ -2,17 +2,25 @@ use crate::devices::RawDevice;
 use crate::vm::{DataType, Machine};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug)]
-pub struct Clock {}
+pub struct Clock {
+    start: u64,
+}
 
 impl Clock {
     pub fn new() -> Self {
-        Clock {}
+        Clock {
+            start: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Couldn't get time")
+                .as_secs(),
+        }
     }
-    fn read(&self) -> f32 {
-        SystemTime::now()
+    fn read(&self) -> i32 {
+        (SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Couldn't get time")
-            .as_secs_f32()
+            .as_secs()
+            - self.start) as i32
     }
 }
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
@@ -22,7 +30,7 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 machine
                     .core
                     .stack
-                    .push(DataType::Float(clock.read()), &mut machine.core.srp);
+                    .push(DataType::Int32(clock.read()), &mut machine.core.srp);
                 if machine.debug {
                     println!("IO.clock.read");
                 }
@@ -30,7 +38,7 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 machine
                     .core
                     .stack
-                    .push(DataType::Float(0.0), &mut machine.core.srp);
+                    .push(DataType::Int32(0), &mut machine.core.srp);
             }
         }
         _ => {}

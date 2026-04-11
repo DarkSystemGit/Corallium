@@ -26,6 +26,6 @@ fn registerAtlas(atlas: [i16]) -> void {}
 fn registerSprite(sprite: Sprite) -> void {}
 fn registerLayer(layer: Layer) -> void {}
 fn render() -> void {}
-fn pullControls(writeLoc: [i16; 11]) -> void {}
+fn pullControls(writeLoc: [bool; 11]) -> void {}
 fn setPixel(x: i16, y: i16, color: i32) -> void {}
 fn getPixel(x: i16, y: i16) -> i32 {}

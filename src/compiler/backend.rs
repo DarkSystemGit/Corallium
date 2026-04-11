@@ -698,7 +698,9 @@ impl Backend {
                     "Reloading vreg{} from stack offset {} into {:?}",
                     virt_id, offset, phys
                 ));
-                let save_ex1 = !self.is_reg_free(PhysReg::EX1) && phys != PhysReg::EX1;
+                // emit_stack_addr uses EX1 as address scratch. If destination aliases EX1
+                // (R2/R3/EX1), restoring EX1 would overwrite the just-loaded value.
+                let save_ex1 = !self.is_reg_free(PhysReg::EX1) && !self.is_ex1_alias(phys);
                 if save_ex1 {
                     self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, CommandType::I32)));
                     self.emit(Inst::PhysReg(PhysReg::EX1));

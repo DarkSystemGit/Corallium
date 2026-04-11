@@ -1725,7 +1725,20 @@ impl IrGen {
     fn compile_place_expr(&mut self, expr: Expression, loc: SourceLocation) -> Option<Output> {
         let r = match expr {
             Expression::Subscript(expr, offset_expr) => {
-                let arrptr = self.compile_place_expr(*expr, loc)?;
+                let mut arrptr = self.compile_place_expr(*expr, loc)?;
+                if let Some(TypeKind::Pointer(inner)) = self.unwrap_ptr_ty(arrptr.ty.clone()) {
+                    if let TypeKind::Array(_, _) = *inner.clone() {
+                        // `x` where `x: [T]` is an lvalue slot of type `**[T]`.
+                        // Load once so subscript math uses the actual `*[T]` base pointer.
+                        let loaded = self.alloc_get(TypeKind::Pointer(inner.clone()))?;
+                        self.emit_instruction(Command::Load(
+                            Value::Register(arrptr.clone()),
+                            loaded.clone(),
+                        ));
+                        self.deallocate_register(arrptr.id);
+                        arrptr = loaded;
+                    }
+                }
                 if let Some(TypeKind::Array(arr_elm_ty, _)) = self.unwrap_ptr_ty(arrptr.ty.clone())
                 {
                     let sizeof = self.size_of(*arr_elm_ty.clone(), loc)?;
@@ -1851,6 +1864,7 @@ impl IrGen {
                 }
                 _ => None,
             },
+            Expression::Grouped(expr) => self.compile_place_expr(*expr, loc),
             _ => None,
         };
         return match r.is_some() {

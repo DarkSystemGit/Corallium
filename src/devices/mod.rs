@@ -7,6 +7,7 @@ pub mod audio;
 pub mod clock;
 pub mod disk;
 pub mod gfx;
+pub mod serial;
 #[derive(Debug)]
 pub struct Device {
     pub driver: fn(machine: &mut Machine, command: i16, device_id: usize),
@@ -18,6 +19,7 @@ pub enum RawDevice {
     Audio(AudioDevice),
     Clock(Clock),
     Graphics(GraphicsSystem),
+    Serial,
 }
 pub fn get_device_list() -> Vec<Device> {
     vec![
@@ -36,6 +38,10 @@ pub fn get_device_list() -> Vec<Device> {
         Device {
             driver: gfx::driver,
             contents: RawDevice::Graphics(GraphicsSystem::new([320, 240])),
+        },
+        Device {
+            driver: serial::driver,
+            contents: RawDevice::Serial,
         },
     ]
 }

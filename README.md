@@ -105,7 +105,8 @@ Graphics control mapping:
 ## Project layout
 
 - `src/compiler/` - Coral frontend, AST, IR generation, and backend lowering
+- `src/std/` - Coral standard libary
 - `src/executable.rs` - bytecode/function packing, constants, disk image build
 - `src/vm.rs` - VM execution engine, stack/memory model, debug console
 - `src/devices/` - disk, audio, clock, graphics, and serial drivers
-- `test/` - small Coral import examples
+- `test/` - small Coral examples & tests

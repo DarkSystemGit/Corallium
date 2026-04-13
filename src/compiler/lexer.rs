@@ -565,7 +565,7 @@ impl Display for TypeKind {
             TypeKind::Uint32 => write!(f, "uint32"),
             TypeKind::Void => write!(f, "void"),
             TypeKind::Bool => write!(f, "bool"),
-            TypeKind::Pointer(ty) => write!(f, "*{}", ty),
+            TypeKind::Pointer(ty) => write!(f, "&{}", ty),
             TypeKind::Array(ty, size) => {
                 if *size == usize::MAX {
                     write!(f, "[{}]", ty)

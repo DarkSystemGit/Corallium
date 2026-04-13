@@ -36,7 +36,11 @@ impl Library {
             for i in block.iter_mut() {
                 if let Bytecode::FunctionRef(func_ref) = i {
                     *i = Bytecode::FunctionRef(
-                        func_ref.replace("self::", &format!("{}::", self.name)),
+                        if func_ref.starts_with(&format!("{}::", self.name)) {
+                            func_ref.clone()
+                        } else {
+                            format!("{}::{}", self.name, func_ref)
+                        },
                     );
                 }
             }

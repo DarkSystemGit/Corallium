@@ -899,17 +899,51 @@ impl Backend {
     fn spill(&mut self, reg: PhysReg) {
         let func_idx = self.loc.0;
         let Some(owner_id) = self.functions[func_idx].phys_owners.get(&reg).copied() else {
+            let has_ex1_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::EX1);
+            let has_ex2_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::EX2);
+            let has_r2_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::R2);
+            let has_r3_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::R3);
+            let has_r4_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::R4);
+            let has_r5_owner = self.functions[func_idx]
+                .phys_owners
+                .contains_key(&PhysReg::R5);
             match reg {
                 PhysReg::EX1 => {
-                    self.spill(PhysReg::R2);
-                    self.spill(PhysReg::R3);
+                    if has_r2_owner {
+                        self.spill(PhysReg::R2);
+                    }
+                    if has_r3_owner {
+                        self.spill(PhysReg::R3);
+                    }
                 }
                 PhysReg::EX2 => {
-                    self.spill(PhysReg::R4);
-                    self.spill(PhysReg::R5);
+                    if has_r4_owner {
+                        self.spill(PhysReg::R4);
+                    }
+                    if has_r5_owner {
+                        self.spill(PhysReg::R5);
+                    }
                 }
-                PhysReg::R2 | PhysReg::R3 => self.spill(PhysReg::EX1),
-                PhysReg::R4 | PhysReg::R5 => self.spill(PhysReg::EX2),
+                PhysReg::R2 | PhysReg::R3 => {
+                    if has_ex1_owner {
+                        self.spill(PhysReg::EX1);
+                    }
+                }
+                PhysReg::R4 | PhysReg::R5 => {
+                    if has_ex2_owner {
+                        self.spill(PhysReg::EX2);
+                    }
+                }
                 _ => {}
             }
             return;

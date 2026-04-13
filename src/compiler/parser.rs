@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::compiler::ir::Header;
@@ -599,35 +599,30 @@ impl Parser {
         let loc = self.next().loc.get_src_loc(src);
         let file_name = self.file_name.clone();
         if let TokenKind::String(rpath) = &self.next().kind {
-            let mut ancestors = Path::new(&file_name).ancestors();
-            ancestors.next();
-            let path = ancestors
-                .next()?
-                .join(&(rpath.clone()))
+            let path = Path::new(&file_name)
+                .parent()
+                .unwrap_or(Path::new(""))
+                .join(rpath)
                 .to_str()
                 .unwrap()
                 .to_string();
             self.matchToken(TokenKind::Semicolon)?;
             let file = std::fs::read_to_string(path.clone())
                 .expect(&format!("Invalid import path: {}", &path));
-            let import_name = Path::new(&path)
-                .file_name()
+            let import_module = Path::new(&path)
+                .file_stem()
                 .expect(&format!("Invalid import path: {}", &path))
                 .to_str()
                 .unwrap()
                 .to_string();
-            let is_header = Path::new(&path).extension()? == ".h";
-            let mut parser = Parser::new(file, import_name.clone(), !is_header);
+            let is_header = Path::new(&path).extension()?.to_str()? == "h";
+            let mut parser = Parser::new(file, path.clone(), !is_header);
             let header = parser.parse().1;
             for i in header.symbols.iter() {
                 match &i.body {
                     Definition::User(ty) => {
                         self.type_table.insert(
-                            format!(
-                                "{}::{}",
-                                Path::new(&import_name).file_stem()?.display(),
-                                i.name.clone()
-                            ),
+                            format!("{}::{}", import_module, i.name.clone()),
                             match ty {
                                 super::ir::UserType::Enum(_) => UserType::Enum,
                                 super::ir::UserType::Struct(_) => UserType::Struct,

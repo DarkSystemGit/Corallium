@@ -17,6 +17,7 @@ pub fn gen_libs() {
     gen_clock().expect("Failed to generate clock stdlib");
     gen_serial().expect("Failed to generate serial stdlib");
     gen_disk().expect("Failed to generate disk stdlib");
+    gen_mem_core().expect("Failed to generate mem_core stdlib");
 }
 fn gen_gfx() -> io::Result<()> {
     let mut gfx = Library::new("gfx".to_string());
@@ -377,4 +378,78 @@ fn gen_disk() -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     disk.to_file(out)
+}
+
+fn gen_mem_core() -> io::Result<()> {
+    let mut mem_core = Library::new("mem_core".to_string());
+
+    #[rustfmt::skip]
+    mem_core.add_fn(Fn::new_with_blocks(
+        "read_mem".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    mem_core.add_fn(Fn::new_with_blocks(
+        "read_mem_ex".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    mem_core.add_fn(Fn::new_with_blocks(
+        "write_mem".to_string(),
+        vec![2, 1],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::Store),  Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    mem_core.add_fn(Fn::new_with_blocks(
+        "write_mem_ex".to_string(),
+        vec![2, 2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),   Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::LoadEx),  Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX2),
+            Bytecode::Command(CommandType::AddEx),   Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx),  Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::StoreEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX2),
+            Bytecode::Command(CommandType::Return),  Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    mem_core.add_fn(Fn::new_with_blocks(
+        "heap_start".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::PushEx), Bytecode::HeapStart(),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1), Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    let out = Path::new("src/std/mem_core.bin");
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    mem_core.to_file(out)
 }

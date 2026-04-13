@@ -727,8 +727,14 @@ impl IrGen {
                             out = self.allocate_register(TypeKind::Bool);
                             let temp = self.alloc_get(TypeKind::Bool)?;
                             self.emit_instruction(Command::Eq(left, right, temp.clone()));
-                            let temp_val = self.convert_output_to_value(temp.clone());
-                            self.emit_instruction(Command::Not(temp_val, self.get_register(out)?));
+                            self.emit_instruction(Command::Eq(
+                                Value::Register(temp.clone()),
+                                Value::Immediate(Immediate {
+                                    value: 0.0,
+                                    ty: TypeKind::Bool,
+                                }),
+                                self.get_register(out)?,
+                            ));
                             self.deallocate_register(temp.id);
                         }
                         BinaryOperator::Lt => {
@@ -1370,7 +1376,8 @@ impl IrGen {
             return true;
         }
         match self.unwrap_ptr_ty(ty) {
-            Some(TypeKind::Array(_, _) | TypeKind::Struct(_) | TypeKind::Union(_)) => true,
+            Some(TypeKind::Array(_, size)) => size != usize::MAX,
+            Some(TypeKind::Struct(_) | TypeKind::Union(_)) => true,
             _ => false,
         }
     }
@@ -1800,14 +1807,12 @@ impl IrGen {
                             if let Some(fieldTy) = fieldTy {
                                 // FIX: only sum fields that come before `prop`,
                                 // not all fields (which would give total struct size).
-                                let offset = fields.keys().take_while(|k| *k != &prop).fold(
-                                    0,
-                                    |acc, k| {
+                                let offset =
+                                    fields.keys().take_while(|k| *k != &prop).fold(0, |acc, k| {
                                         acc + self.size_of(fields[k].clone(), loc).expect(
                                             "INTERNAL ERROR: Failed to calculate size of type",
                                         )
-                                    },
-                                );
+                                    });
                                 let reg =
                                     self.alloc_get(TypeKind::Pointer(Box::new(fieldTy.clone())))?;
                                 self.emit_instruction(Command::Add(
@@ -1836,7 +1841,19 @@ impl IrGen {
                 _ => None,
             },
             Expression::Identifier(ident) => {
-                let symbol = self.lookup_symbol(ident.as_str())?.clone();
+                let defsym = Symbol {
+                    name: String::new(),
+                    body: Definition::Var(TypeKind::Void),
+                    id: 0,
+                    size: None,
+                };
+                let symbol = self
+                    .lookup_symbol(ident.as_str())
+                    .unwrap_or_else(|| {
+                        self.emitError(loc, &format!("No such identfier {}", ident));
+                        &defsym
+                    })
+                    .clone();
                 match symbol.body.clone() {
                     Definition::Function(ty, id) => {
                         let loc = Value::Location(Location::Function(id));

@@ -70,7 +70,7 @@ fn main() -> void {
 }
 ```
 
-## Runtime model
+## Specs
 
 - Memory: 16 MiB base RAM, with stack-addressable memory above that range
 - Display: 320x240 framebuffer (scaled in a window)

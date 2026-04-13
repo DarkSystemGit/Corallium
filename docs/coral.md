@@ -116,7 +116,7 @@ fn unwrap_or_zero(v: MaybeInt) -> i32 {
 }
 ```
 
-## Type behavior (important)
+## Type behavior
 
 Coral syntax is straightforward, but aggregate types are pointer-backed in compiler lowering.
 

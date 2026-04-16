@@ -8,8 +8,9 @@ mod vm;
 use crate::devices::disk::*;
 use compiler::compile_file;
 use genstdlibs::gen_libs;
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use std::{collections::HashMap, env, ffi::CString, fs, path::PathBuf};
 use test::run_cases;
+use util::convert_i32_to_i16;
 use vm::Machine;
 
 fn help() {
@@ -43,12 +44,22 @@ fn linked_files_from_args(args: &[String]) -> Vec<String> {
 
 fn append_linked_files(args: &[String], disk: &mut Disk) {
     for linked_file in linked_files_from_args(args) {
-        let data = fs::read(&linked_file)
-            .expect(&format!("Failed to read linked file: {}", &linked_file));
+        let file_data: Vec<i16> = fs::read(&linked_file)
+            .expect(&format!("Failed to read linked file: {}", &linked_file))
+            .into_iter()
+            .map(|b| b as i16)
+            .collect();
+        let len = file_data.len();
+        let name: Vec<i16> = linked_file
+            .into_bytes()
+            .into_iter()
+            .map(|b| b as i16)
+            .collect();
+        let data = vec![vec![name.len() as i16], name, vec![len as i16], file_data].concat();
         disk.push(DiskSection {
             section_type: DiskSectionType::Data,
             id: disk.len() as i16,
-            data: data.into_iter().map(|b| b as i16).collect(),
+            data,
         });
     }
 }
@@ -94,6 +105,9 @@ fn compile_run() {
     let mut machine = Machine::new(debug);
     machine.set_disk(disk);
     machine.run();
+    if args.contains(&"--save-disk".to_string()) {
+        //save_disk(machine.devic, path)
+    }
 }
 fn run_bytecode() {
     let args: Vec<String> = env::args().collect();
@@ -107,6 +121,9 @@ fn run_bytecode() {
     let mut machine = Machine::new(debug);
     machine.set_disk(disk);
     machine.run();
+    if args.contains(&"--save-disk".to_string()) {
+        //save_disk(machine.devic, path)
+    }
 }
 fn main() {
     let map: HashMap<&'static str, fn()> = HashMap::from([
@@ -120,7 +137,7 @@ fn main() {
     for (word, fun) in map {
         if env::args()
             .collect::<Vec<String>>()
-            .contains(&format!("--{}", word))
+            .contains(&format!("{}", word))
         {
             fun();
             return;

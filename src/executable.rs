@@ -244,23 +244,23 @@ impl Executable {
         Executable {
             constants: ConstantTable::new(),
             fns: Vec::new(),
-            //loader loads from base sector to bytecode sector count, taking only bytecode len%i16::MAX for th final sector.
-            //Then, it loads from bytecode sector count+1 to bytecode sector count+data_sector count, loading only data len%i16::MAX for the final sector
+            //loader loads from base sector to bytecode sector count, taking only bytecode len%i32::MAX for th final sector.
+            //Then, it loads from bytecode sector count+1 to bytecode sector count+data_sector count, loading only data len%i32::MAX for the final sector
             //All of this is loaded at mem offset
             //Pseudocode
             //let next_mem=exec[0];
             //for i in exec[1]..exec[1]+exec[3]+exec[5]-1{
             //  if i==exec[1]+(exec[3]-1){
-            //      let fcount=exec[2]%i16::MAX
+            //      let fcount=exec[2]%i32::MAX
             //      load(i,fcount,next_mem);
             //      next_mem+=fcount
             //  }else if i==exec[1]+exec[3]+exec[5]-1{
-            //      let dfcount=exec[4]%i16::MAX;
+            //      let dfcount=exec[4]%i32::MAX;
             //      load(i,dfcount,next_mem);
             //      next_mem+=dfcount;
             //  }else{
-            //      load(i,i16::MAX,next_mem)
-            //      next_mem+=i16::MAX
+            //      load(i,i32::MAX,next_mem)
+            //      next_mem+=i32::MAX
             //  }
             //}
             loader: Self::default_loader(512, 6),
@@ -386,7 +386,7 @@ impl Executable {
         println!("Offset: {}", offset - header_len);
         println!(
             "Base Sector: {}",
-            ((offset - header_len) as f32 / i16::MAX as f32).floor() as usize
+            ((offset - header_len) as f32 / i32::MAX as f32).floor() as usize
         );
         println!("Bytecode Len: {}", bytecode.len() + 2);
         println!("Code Sector Count: {}", code_sectors);
@@ -427,8 +427,8 @@ impl Executable {
         data: Vec<i16>,
     ) {
         //(total exe code len/max sector data).ceil()
-        let code_sectors = ((offset + bytecode.len()) as f32 / i16::MAX as f32).ceil() as usize;
-        let data_sectors = (data.len() as f32 / i16::MAX as f32).ceil() as usize;
+        let code_sectors = ((offset + bytecode.len()) as f32 / i32::MAX as f32).ceil() as usize;
+        let data_sectors = (data.len() as f32 / i32::MAX as f32).ceil() as usize;
         if debug {
             self.print_structure(
                 &bytecode,
@@ -442,7 +442,7 @@ impl Executable {
         //[mem offset,base sector,bytecode len,bytecode sector count, data len, data sector count]
         let headers = vec![
             offset - header_len,
-            ((offset - header_len) as f32 / i16::MAX as f32).floor() as usize,
+            ((offset - header_len) as f32 / i32::MAX as f32).floor() as usize,
             bytecode.len() + 2,
             code_sectors,
             data.len(),
@@ -457,14 +457,14 @@ impl Executable {
         ]);
         //remove headers for these calculations
         offset -= header_len;
-        let base_sector = (offset as f32 / i16::MAX as f32).floor() as usize;
-        let bsector_offset = (offset as f32 % i16::MAX as f32) as usize;
-        let data_sector_count = (data.len() as f32 / i16::MAX as f32).ceil() as usize;
+        let base_sector = (offset as f32 / i32::MAX as f32).floor() as usize;
+        let bsector_offset = (offset as f32 % i32::MAX as f32) as usize;
+        let data_sector_count = (data.len() as f32 / i32::MAX as f32).ceil() as usize;
         for i in base_sector..code_sectors {
             if i == base_sector {
-                let insert_len = match executable.len() < i16::MAX as usize {
+                let insert_len = match executable.len() < i32::MAX as usize {
                     true => executable.len(),
-                    false => i16::MAX as usize,
+                    false => i32::MAX as usize,
                 };
                 resize_vec(bsector_offset + insert_len, &mut disk[i].data, 0);
                 disk[i]
@@ -476,8 +476,8 @@ impl Executable {
                     DiskSectionType::Libary => DiskSectionType::Libary,
                     _ => DiskSectionType::Code,
                 };
-                let sector_start = (i16::MAX as usize) * (i - base_sector);
-                let sector_end = (i16::MAX as usize) * (i - base_sector + 1);
+                let sector_start = (i32::MAX as usize) * (i - base_sector);
+                let sector_end = (i32::MAX as usize) * (i - base_sector + 1);
                 disk[i].data = executable[sector_start..sector_end].to_vec();
             }
         }
@@ -493,9 +493,9 @@ impl Executable {
                 },
             );
             let iteration = i - code_sectors;
-            let data_start = iteration * i16::MAX as usize;
-            let data_end = match data.len() < (iteration + 1) * i16::MAX as usize {
-                false => (iteration + 1) * i16::MAX as usize,
+            let data_start = iteration * i32::MAX as usize;
+            let data_end = match data.len() < (iteration + 1) * i32::MAX as usize {
+                false => (iteration + 1) * i32::MAX as usize,
                 true => data.len(),
             };
             disk[i] = DiskSection {

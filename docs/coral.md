@@ -172,8 +172,8 @@ If the value must outlive the function return, allocate backing storage (for exa
 
 | Function | Description |
 | --- | --- |
-| `fn read(section: i16, addr: i32, len: i16, dest: [i16]) -> void` | Read bytes/words from a disk section into destination memory. |
-| `fn write(section: i16, addr: i32, byte: i16) -> void` | Write one value at an address in a disk section. |
+| `fn read(section: i16, addr: i32, len: i32, dest: &void) -> void` | Read values from a disk section into destination memory. |
+| `fn write(section: i16, addr: i32, len: i32, buffer: &void) -> void` | Write `len` values from `buffer` into a disk section starting at `addr`. |
 | `fn loadSectors(start: i16, count: i16, dest: i32) -> void` | Bulk-load sectors into memory. |
 | `fn linkedFileStart() -> i16` | Get the first linked data section after executable data. |
 

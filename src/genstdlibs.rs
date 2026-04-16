@@ -301,14 +301,14 @@ fn gen_disk() -> io::Result<()> {
     #[rustfmt::skip]
     disk.add_fn(Fn::new_with_blocks(
         "read".to_string(),
-        vec![1, 2, 1, 2],
+        vec![1, 2, 2, 2],
         vec![vec![
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(3),
             Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(2),
-            Bytecode::Command(CommandType::Load), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
-            Bytecode::Command(CommandType::Push), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
             Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
@@ -323,11 +323,14 @@ fn gen_disk() -> io::Result<()> {
     #[rustfmt::skip]
     disk.add_fn(Fn::new_with_blocks(
         "write".to_string(),
-        vec![1, 2, 1],
+        vec![1, 2, 2, 2],
         vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(3),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(2),
-            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
-            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
             Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
@@ -370,6 +373,15 @@ fn gen_disk() -> io::Result<()> {
             Bytecode::Command(CommandType::Add),    Bytecode::Register(CommandType::R1),        Bytecode::Register(CommandType::R2),
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::Return), Bytecode::Int(1),                           Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+    #[rustfmt::skip]
+    disk.add_fn(Fn::new_with_blocks(
+        "sectorCount".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::IO),Bytecode::Int(DISK_DEVICE_ID),Bytecode::Int(3),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));
 

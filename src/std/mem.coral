@@ -22,7 +22,22 @@ fn init()->void{
     create_entry(heap,0 as i32,false,-1 as i32,false);
     return;
 }
+
+ fn ensure_init()->void{
+     let heap: i32=mem_core::heap_start();
+     let size: i32=mem_core::read_mem_ex(heap);
+     let free: bool=mem_core::read_mem(heap+(2 as i32)) as bool;
+     let next: i32=mem_core::read_mem_ex(heap+(3 as i32));
+     let prev: i32=mem_core::read_mem_ex(heap+(5 as i32));
+
+     // Uninitialized heap header pattern (all zeroed memory)
+     if ((size==(0 as i32)) & (!free) & (next==(0 as i32)) & (prev==(0 as i32))){
+         init();
+     };
+     return;
+ }
 fn alloc(size: i32)->&void{
+    ensure_init();
     let ptr:i32=mem_core::heap_start();
     while (ptr!=(-1 as i32)){
         let current_size:i32=mem_core::read_mem_ex(ptr);

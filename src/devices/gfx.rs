@@ -469,7 +469,7 @@ impl GraphicsSystem {
             display: Display::new(
                 resolution[0] as usize,
                 resolution[1] as usize,
-                "Micro-16",
+                "Corallium",
                 65,
                 Scale::X4,
             ),

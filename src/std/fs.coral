@@ -1,0 +1,79 @@
+import "disk.h";
+import "mem.coral";
+import "string.coral";
+import "serial.h";
+struct FileBuf{
+    id: i16,
+    offset: i32,
+    len: i32,
+    buf_offset: i32,
+    buf_len: i32,
+    buf: &void
+}
+fn get_len(sec: i16, offset: i16)->i32{
+    let filenameLen: [i16]=[0];
+    disk::read(sec,offset as i32,1 as i32,filenameLen as &void);
+    return filenameLen[0] as i32;
+}
+fn get_file_section(name: [char])->i16{
+    let loc: i16=disk::linkedFileStart();
+    let sec_count: i16=disk::sectorCount();
+    let nameLen: i32=string::len(name)-(1 as i32);
+    for (0;loc<sec_count;loc=loc+1){
+        let filenameLen: i16=get_len(loc,0);
+        let filename: &void =mem::alloc(filenameLen as i32);
+        disk::read(loc,1 as i32,filenameLen as i32,filename);
+        if(mem::compare(name as &void,filename,nameLen)){
+            mem::free(filename);
+
+            return loc;
+        };
+
+        mem::free(filename);
+    };
+    return -1;
+}
+fn openFile(name: [char])->FileBuf{
+    let fileSec:i16=get_file_section(name);
+    let offset_len: i32=get_len(fileSec,0)+(1 as i32);
+    let len: i32=get_len(fileSec,offset_len as i16);
+    return FileBuf{
+        id: fileSec,
+        offset: offset_len+(1 as i32),
+        len: len,
+        buf_len: 0 as i32,
+        buf_offset:0 as i32,
+        buf: 0 as &void
+    };
+}
+fn readFile(buf: FileBuf, offset: i32,len: i32?)->void{
+    let actual_len: i32=match len{
+        Some(l)->{
+            l
+        },
+        None->{
+            buf.len
+        }
+    };
+    let store_buf: &void=mem::alloc(actual_len);
+
+    disk::read(buf.id, buf.offset+offset,actual_len,store_buf);
+    buf.buf=store_buf;
+    buf.buf_len=actual_len;
+    buf.buf_offset=buf.offset+offset;
+    return;
+}
+fn writeFile(buf: FileBuf)->void{
+    disk::write(buf.id,buf.buf_offset,buf.buf_len,buf.buf);
+    return;
+}
+fn closeFile(buf: FileBuf)->void{
+    mem::free(buf.buf);
+    buf.id=-1;
+    buf.len=0 as i32;
+    buf.offset=0 as i32;
+    buf.buf_len=0 as i32;
+    buf.buf_offset=0 as i32;
+    buf.buf=0 as &void;
+    return;
+}

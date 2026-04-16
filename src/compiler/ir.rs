@@ -168,18 +168,71 @@ impl IrGen {
             imported_symbols: Vec::new(),
         }
     }
+    fn qualify_imported_type_name(module: &str, name: String) -> String {
+        if name.contains("::") {
+            name
+        } else {
+            format!("{}::{}", module, name)
+        }
+    }
+    fn qualify_imported_type(module: &str, ty: TypeKind) -> TypeKind {
+        match ty {
+            TypeKind::Pointer(inner) => {
+                TypeKind::Pointer(Box::new(Self::qualify_imported_type(module, *inner)))
+            }
+            TypeKind::Array(inner, size) => {
+                TypeKind::Array(Box::new(Self::qualify_imported_type(module, *inner)), size)
+            }
+            TypeKind::Struct(name) => {
+                TypeKind::Struct(Self::qualify_imported_type_name(module, name))
+            }
+            TypeKind::Union(name) => {
+                TypeKind::Union(Self::qualify_imported_type_name(module, name))
+            }
+            TypeKind::Enum(name) => TypeKind::Enum(Self::qualify_imported_type_name(module, name)),
+            TypeKind::Function(params, ret) => TypeKind::Function(
+                params
+                    .into_iter()
+                    .map(|p| Self::qualify_imported_type(module, p))
+                    .collect(),
+                Box::new(Self::qualify_imported_type(module, *ret)),
+            ),
+            TypeKind::Optional(Some(inner)) => {
+                TypeKind::Optional(Some(Box::new(Self::qualify_imported_type(module, *inner))))
+            }
+            _ => ty,
+        }
+    }
+    fn qualify_imported_user_type(module: &str, userty: UserType) -> UserType {
+        match userty {
+            UserType::Struct(fields) => UserType::Struct(
+                fields
+                    .into_iter()
+                    .map(|(name, ty)| (name, Self::qualify_imported_type(module, ty)))
+                    .collect(),
+            ),
+            UserType::Union(variants) => UserType::Union(
+                variants
+                    .into_iter()
+                    .map(|(name, ty)| (name, Self::qualify_imported_type(module, ty)))
+                    .collect(),
+            ),
+            UserType::Enum(variants) => UserType::Enum(variants),
+        }
+    }
     fn incorperate_header(&mut self, header: Header, loc: SourceLocation) {
         let fn_base = self.next_fn_id;
         for sym in header.symbols {
             match sym.body {
                 Definition::Function(ty, id) => {
+                    let qualified_ty = Self::qualify_imported_type(&header.module, ty);
                     self.define_function(
                         format!("{}::{}", header.module, sym.name),
-                        ty.clone(),
+                        qualified_ty.clone(),
                         id + fn_base,
                     );
                     let mut implict_params = Vec::new();
-                    let rty = match ty {
+                    let rty = match qualified_ty {
                         TypeKind::Function(_, r) => *r,
                         _ => unreachable!(),
                     };
@@ -214,7 +267,10 @@ impl IrGen {
                     self.next_fn_id += 1;
                 }
                 Definition::User(userty) => {
-                    self.define_user_type(format!("{}::{}", header.module, sym.name), userty);
+                    self.define_user_type(
+                        format!("{}::{}", header.module, sym.name),
+                        Self::qualify_imported_user_type(&header.module, userty),
+                    );
                 }
                 _ => {
                     self.emitError(loc, "Global variables are not supported");
@@ -1405,7 +1461,7 @@ impl IrGen {
         );
         match pat {
             Pattern::Some(some) => {
-                self.emit_instruction(Command::JumpTrue(
+                self.emit_instruction(Command::JumpFalse(
                     Location::None,
                     Value::Register(val.clone()),
                 ));
@@ -1420,7 +1476,7 @@ impl IrGen {
                 let mut currb = self.current_block();
                 self.update_jump(
                     start_jump,
-                    Command::JumpTrue(Location::Block(currb), Value::Register(val.clone())),
+                    Command::JumpFalse(Location::Block(currb), Value::Register(val.clone())),
                 );
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {

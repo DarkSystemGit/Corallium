@@ -191,6 +191,24 @@ impl Lexer {
                 if is_whitespace(c) {
                     Token::new(TokenKind::None, start, start + 1)
                 } else if is_digit(c) {
+                    if c == '0'
+                        && (self.input.peek() == Some('x'))
+                        && self
+                            .input
+                            .peek_next(1)
+                            .map_or(false, |next| is_hex_digit(next))
+                    {
+                        self.input.next();
+                        let mut num = String::new();
+                        while self.input.peek().map_or(false, |next| is_hex_digit(next)) {
+                            num.push(self.input.next().unwrap());
+                        }
+                        return Token::new(
+                            TokenKind::Integer(i32::from_str_radix(&num, 16).unwrap()),
+                            start,
+                            start + 2 + num.len(),
+                        );
+                    }
                     let mut num = String::from(c);
                     let mut float = false;
                     while self.input.peek().is_some()
@@ -285,6 +303,9 @@ impl Lexer {
 }
 fn is_digit(ch: char) -> bool {
     ch.is_digit(10)
+}
+fn is_hex_digit(ch: char) -> bool {
+    ch.is_digit(16)
 }
 fn is_whitespace(ch: char) -> bool {
     ch.is_whitespace()

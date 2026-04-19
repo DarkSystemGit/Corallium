@@ -25,13 +25,38 @@ fn get_file_section(name: [char])->i16{
         disk::read(loc,1 as i32,filenameLen as i32,filename);
         if(mem::compare(name as &void,filename,nameLen)){
             mem::free(filename);
-
             return loc;
         };
 
         mem::free(filename);
     };
     return -1;
+}
+struct FileList{
+    buf: [[char]],
+    len: i16
+}
+fn list_files()->FileList{
+    let file_start: i16=disk::linkedFileStart();
+    let sec_count: i16=disk::sectorCount();
+    let buf: [[char]]=mem::alloc(((sec_count-file_start)*2) as i32) as [[char]];
+    for(let fileSec: i16=file_start; fileSec<sec_count; fileSec=fileSec+1){
+        let filenameLen: i16=get_len(fileSec,0);
+        let filename: [char] =mem::alloc((filenameLen+1) as i32) as [char];
+        disk::read(fileSec,1 as i32,filenameLen as i32,filename as &void);
+        filename[filenameLen]=0;
+        buf[fileSec-file_start]=filename;
+    };
+    return FileList{
+        buf: buf,
+        len: sec_count-file_start
+    };
+}
+fn free_file_list(list: FileList)->void{
+    for (let i: i16=0; i<list.len; i=i+1){
+        mem::free(list.buf[i] as &void);
+    };
+    return;
 }
 fn openFile(name: [char])->FileBuf{
     let fileSec:i16=get_file_section(name);

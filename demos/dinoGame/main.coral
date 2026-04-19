@@ -1,0 +1,91 @@
+import "../../src/std/fs.coral";
+import "../../src/std/serial.h";
+import "../../src/std/gfx.h";
+import "../../src/std/audio.h";
+import "../../src/std/clock.h";
+import "../../src/std/mem.coral";
+import "../../src/std/string.coral";
+fn init_rand() -> &i32 {
+    let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
+    seed_ptr[0]=clock::read();
+    return seed_ptr as &i32;
+}
+
+fn random(seed_ptr: &i32, start: i16, end: i16) -> i16 {
+    let seed: [i32] = seed_ptr as [i32];
+    let current_state: i32 = seed[0];
+    let next_state: i32 = (1103515245 * current_state) + (12345 as i32);
+    seed[0] = next_state;
+    let raw_val: i32 = (next_state >> (16 as i32)) & (0x7FFF as i32);
+    let range: i16 = end - start + (1 as i16);
+
+    if (range <= 0 as i16) {
+        return start;
+    };
+    return start + ((raw_val as i16) % range);
+}
+fn main()->void{
+    let rand_ptr: &i32=init_rand();
+    let atlasFile: fs::FileBuf=fs::openFile("atlas.bin");
+    fs::readFile(atlasFile,0 as i32,None);
+    gfx::registerAtlas(atlasFile.buf as [i16]);
+    let bgTilemap: [i16]=[
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+    ];
+    let cloudsTilemap: [i16]=[
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,3,3,3,3,
+    3,3,3,3,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,1,3,3,3,3,1,3,3,3,3,3,3,3,1,
+    3,3,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,3,3,
+    3,3,3,3,3,3,3,3,1,3,3,3,3,3,3,3,3,3,3,3,
+    ];
+    let cactus_slots: [i16;40]=[0;40];
+    let comets: [i16;40]=[0;40];
+    for(let i: i16=0; i<40; i=i+1){
+        let r: i16=random(rand_ptr,0,100);
+        if ((r%5==0)&(r%3==0)){
+            cactus_slots[i]=8;
+        }else{
+            if (r%5==0){
+                cactus_slots[i]=7;
+            };
+        };
+        if (r%15){
+            comets[i]=51;
+        };
+    };
+    let bgLayer: gfx::Layer=gfx::Layer{
+        id: 0,
+        x: 0,
+        y: 0,
+        tilemap_height:15,
+        tilemap_width: 16,
+        tilemap: bgTilemap,
+        transform: gfx::Transform::SingleMatrixAffine,
+        transformInfo:
+        Some([
+        2.0,0.0,
+        0.0,2.0,
+        ]),
+        loc: Some([96 as i32,60 as i32])
+    };
+    gfx::registerLayer(bgLayer);
+    while (true){
+        gfx::render();
+    };
+    return;
+}

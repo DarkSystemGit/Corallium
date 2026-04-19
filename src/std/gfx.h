@@ -20,7 +20,8 @@ struct Layer {
     tilemap_width: i16,
     tilemap: [i16],
     transform: Transform,
-    transformInfo: [f32],
+    transformInfo: [f32]?,
+    loc: [i32;2]?
 }
 fn registerAtlas(atlas: [i16]) -> void {}
 fn registerSprite(sprite: Sprite) -> void {}

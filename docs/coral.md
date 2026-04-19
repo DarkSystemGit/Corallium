@@ -198,7 +198,8 @@ If the value must outlive the function return, allocate backing storage (for exa
   - `tilemap_width: i16`
   - `tilemap: [i16]`
   - `transform: Transform`
-  - `transformInfo: [f32]`
+  - `transformInfo: [f32]?`
+  - `loc: [i32;2]?` (camera center for affine transforms)
 
 #### Functions
 
@@ -211,6 +212,55 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array. |
 | `fn setPixel(x: i16, y: i16, color: i32) -> void` | Set a pixel color. |
 | `fn getPixel(x: i16, y: i16) -> i32` | Read a pixel color. |
+
+#### How gfx works
+
+Render flow:
+
+1. `registerAtlas` uploads tile data.
+2. `registerLayer` and `registerSprite` register/update objects by `id`.
+3. `render()` draws all layers first, then sprites.
+
+Layer transform modes:
+
+- `Flat`: direct tilemap draw at `(x, y)`.
+- `SingleMatrixAffine`: one 2x2 matrix for the whole frame.
+- `MultiMatrixAffine`: one 2x2 matrix per screen row (scanline).
+
+Affine inputs:
+
+- `transformInfo: [f32]?`
+  - Single: `Some([m00, m01, m10, m11])`
+  - Multi: `Some([...])` with 4 floats per scanline, in row order
+- `loc: [i32;2]?`
+  - `Some([cx, cy])` camera/sample center
+
+Math used by affine modes:
+
+For each destination pixel `(x_d, y_d)`, the renderer samples from source `(x_s, y_s)` using the inverse of the selected matrix:
+
+```text
+M = [a b]
+    [c d]
+
+det = a*d - b*c
+M^-1 = (1/det) * [ d -b]
+                  [-c  a]
+
+rx = x_d - screen_center_x
+ry = y_d - screen_center_y
+
+[x_s]   [im00 im01] [rx]   [screen_center_x]
+[y_s] = [im10 im11] [ry] + [screen_center_y]
+```
+
+- `SingleMatrixAffine` uses one `M` for every scanline.
+- `MultiMatrixAffine` picks `M[y_d]`, so each scanline can warp differently.
+
+Notes:
+
+- Affine modes require `transformInfo` and `loc` to be `Some(...)`.
+- Because inverse mapping is used, scale feels inverted: `0.5` zooms in, `2.0` zooms out.
 
 ### `mem_core` (`src/std/mem_core.h`)
 

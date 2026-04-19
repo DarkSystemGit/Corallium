@@ -8,7 +8,13 @@ mod vm;
 use crate::devices::disk::*;
 use compiler::compile_file;
 use genstdlibs::gen_libs;
-use std::{collections::HashMap, env, ffi::CString, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::CString,
+    fs,
+    path::{Path, PathBuf},
+};
 use test::run_cases;
 use util::convert_i32_to_i16;
 use vm::Machine;
@@ -16,25 +22,58 @@ use vm::Machine;
 fn help() {
     println!("Corallium CLI");
     println!("Usage:");
-    println!("  --run --file <path.coral> [--debug] [--link <file1> <file2> ...]");
-    println!("  --compile --file <path.coral> [--debug] [--link <file1> <file2> ...]");
+    println!("  --run --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
+    println!("  --compile --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
     println!("  --bytecode --file <path.cart> [--debug]");
     println!("  --genstd");
     println!("  --test");
     println!("  --help");
 }
 
+fn collect_linked_files(path: &Path, linked_files: &mut Vec<String>) {
+    if path.is_file() {
+        linked_files.push(path.to_string_lossy().to_string());
+        return;
+    }
+    if path.is_dir() {
+        let mut entries = fs::read_dir(path)
+            .expect(&format!("Failed to read linked directory: {}", path.display()))
+            .map(|entry| {
+                entry
+                    .expect(&format!(
+                        "Failed to read linked directory entry in {}",
+                        path.display()
+                    ))
+                    .path()
+            })
+            .collect::<Vec<PathBuf>>();
+        entries.sort();
+        for entry in entries {
+            collect_linked_files(&entry, linked_files);
+        }
+        return;
+    }
+    panic!("Linked path does not exist: {}", path.display());
+}
+
 fn linked_files_from_args(args: &[String]) -> Vec<String> {
     match args.iter().position(|x| x == "--link") {
         Some(link_arg) => {
-            let linked_files = args
+            let linked_paths = args
                 .iter()
                 .skip(link_arg + 1)
                 .take_while(|arg| !arg.starts_with("--"))
                 .cloned()
                 .collect::<Vec<String>>();
+            if linked_paths.is_empty() {
+                panic!("Expected one or more files or directories after --link");
+            }
+            let mut linked_files = Vec::new();
+            for linked_path in linked_paths {
+                collect_linked_files(Path::new(&linked_path), &mut linked_files);
+            }
             if linked_files.is_empty() {
-                panic!("Expected one or more files after --link");
+                panic!("No files found to link after --link");
             }
             linked_files
         }
@@ -46,8 +85,12 @@ fn append_linked_files(args: &[String], disk: &mut Disk) {
     for linked_file in linked_files_from_args(args) {
         let file_data: Vec<i16> = fs::read(&linked_file)
             .expect(&format!("Failed to read linked file: {}", &linked_file))
-            .into_iter()
-            .map(|b| b as i16)
+            .chunks(2)
+            .map(|chunk| {
+                let lo = chunk[0];
+                let hi = if chunk.len() == 2 { chunk[1] } else { 0 };
+                i16::from_le_bytes([lo, hi])
+            })
             .collect();
         let len = file_data.len();
         let name: Vec<i16> = linked_file

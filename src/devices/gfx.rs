@@ -1,4 +1,4 @@
-use crate::util::convert_i16_to_u32;
+use crate::util::{convert_i16_to_i32, convert_i16_to_u32};
 use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
 use minifb::{self, Key, Scale, Window, WindowOptions};
@@ -284,7 +284,8 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
     // *[i16] tilemap
     // u8 enum(0: Regular,1: SingleMatrixAffine,2: MultiMatrixAffine) transform
     // *[f32] transformData
-    let rdata = machine.memory.read_range(ptr..ptr + 10, machine);
+    // *[i32;2] loc
+    let rdata = machine.memory.read_range(ptr..ptr + 12, machine);
     let (
         id,
         off_x,
@@ -293,7 +294,8 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
         tilemap_width,
         tilemap_ptr,
         transform_type,
-        transform_ptr,
+        transform_opt_ptr,
+        loc_opt_ptr,
     ) = (
         rdata[0],
         rdata[1],
@@ -303,29 +305,60 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
         convert_i16_to_u32(&[rdata[5], rdata[6]]).expect("Couldn't get tilemap") as usize,
         rdata[7],
         convert_i16_to_u32(&[rdata[8], rdata[9]]).expect("Couldn't get transform data") as usize,
+        convert_i16_to_u32(&[rdata[10], rdata[11]]).expect("Couldn't get loc data") as usize,
     );
     let offset = [off_x as i32, off_y as i32];
     let render_type = match transform_type {
         0 => Some(RenderType::Regular),
         1 => {
+            let transform_ptr = convert_i16_to_u32(
+                &machine
+                    .memory
+                    .read_range(transform_opt_ptr..transform_opt_ptr + 2, machine),
+            )
+            .expect("Couldn't dereference transform data option")
+                as usize;
+            let loc_ptr = convert_i16_to_u32(
+                &machine
+                    .memory
+                    .read_range(loc_opt_ptr..loc_opt_ptr + 2, machine),
+            )
+            .expect("Couldn't dereference loc option") as usize;
             let rmatrix = machine.memory.read_range(
-                transform_ptr as usize..transform_ptr as usize + (2 * 4) + 2,
+                transform_ptr as usize..transform_ptr as usize + (2 * 4),
                 machine,
-            ); //4 f32s and 2 i16
+            ); //4 f32s
             let matrix = rmatrix[0..(4 * 2)]
                 .chunks(2)
                 .map(|x| unpack_float(x).expect("Couldn't parse floats"))
                 .collect::<Vec<f32>>();
-            let loc = [rmatrix[8] as i32, rmatrix[9] as i32];
+            let loc = machine.memory.read_range(loc_ptr..loc_ptr + 4, machine);
+
             Some(RenderType::Matrix((
                 [[matrix[0], matrix[1]], [matrix[2], matrix[3]]],
-                loc,
+                [
+                    convert_i16_to_i32(&loc[0..2]),
+                    convert_i16_to_i32(&loc[2..4]),
+                ],
             )))
         }
         2 => {
-            //matracies: [matrix; scanlines]; loc: [i16,i16]
+            let transform_ptr = convert_i16_to_u32(
+                &machine
+                    .memory
+                    .read_range(transform_opt_ptr..transform_opt_ptr + 2, machine),
+            )
+            .expect("Couldn't dereference transform data option")
+                as usize;
+            let loc_ptr = convert_i16_to_u32(
+                &machine
+                    .memory
+                    .read_range(loc_opt_ptr..loc_opt_ptr + 2, machine),
+            )
+            .expect("Couldn't dereference loc option") as usize;
+            //matracies: [matrix; scanlines]; loc: [i32,i32]
             let rmatrix = machine.memory.read_range(
-                transform_ptr as usize..transform_ptr as usize + (4 * 2) * scanlines + 2,
+                transform_ptr as usize..transform_ptr as usize + (4 * 2) * scanlines,
                 machine,
             );
             let matricies = rmatrix[0..(4 * 2) * scanlines]
@@ -335,11 +368,14 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
                 .chunks(4)
                 .map(|x| [[x[0] as f32, x[1] as f32], [x[2] as f32, x[3] as f32]])
                 .collect::<Vec<Matrix>>();
-            let loc = [
-                rmatrix[(4 * 2) * scanlines] as i32,
-                rmatrix[(4 * 2) * scanlines + 1] as i32,
-            ];
-            Some(RenderType::MultiMatrix((matricies, loc)))
+            let loc = machine.memory.read_range(loc_ptr..loc_ptr + 4, machine);
+            Some(RenderType::MultiMatrix((
+                matricies,
+                [
+                    convert_i16_to_i32(&loc[0..2]),
+                    convert_i16_to_i32(&loc[2..4]),
+                ],
+            )))
         }
         _ => None,
     }
@@ -391,11 +427,12 @@ impl BGLayer {
                 self.tilemap.render(self.offset, buf, buf_width);
             }
             RenderType::Matrix((matrix, cam)) => {
+                let scanlines = buf.len() / buf_width as usize;
                 self.tilemap.transform_render(
                     self.offset,
                     buf,
                     buf_width,
-                    &vec![*matrix; self.tilemap.height * 8],
+                    &vec![*matrix; scanlines],
                     *cam,
                 );
             }

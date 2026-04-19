@@ -349,14 +349,18 @@ fn gfx_case() -> TestCase {
     let loc = matrix
         .1
         .iter()
-        .map(|x| Data::Int(*x as i16))
+        .map(|x| Data::Int32(*x))
         .collect::<Vec<Data>>();
-    let layer_transform = exe.add_constant([packaged_matrix, loc].concat());
+    let layer_transform = exe.add_constant(packaged_matrix);
+    let layer_loc = exe.add_constant(loc);
+    let layer_transform_opt = exe.add_constant(vec![Data::ConstantLoc(layer_transform)]);
+    let layer_loc_opt = exe.add_constant(vec![Data::ConstantLoc(layer_loc)]);
     let layer = exe.add_constant(vec![
         Data::Bytes(vec![0, 0, 0, 30, 40]),
         Data::ConstantLoc(layer_data),
         Data::Bytes(vec![2]),
-        Data::ConstantLoc(layer_transform),
+        Data::ConstantLoc(layer_transform_opt),
+        Data::ConstantLoc(layer_loc_opt),
     ]);
     let sprite_data = exe.add_constant(vec![Data::Bytes(vec![2; 4 * 4])]);
     let sprite = exe.add_constant(vec![

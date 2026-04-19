@@ -1089,7 +1089,7 @@ impl Parser {
     }
     fn matchType(&mut self) -> Option<TypeKind> {
         let next = self.peek().clone();
-        match next.kind {
+        let base = match next.kind {
             TokenKind::Operator(OperatorKind::Ampersand) => {
                 self.next();
                 let inner_type = self.matchType()?;
@@ -1138,6 +1138,13 @@ impl Parser {
                 self.emitError(&format!("Expected type, got {:?}", next));
                 None
             }
+        }?;
+
+        if self.peek().kind == TokenKind::Operator(OperatorKind::Optional) {
+            self.next();
+            Some(TypeKind::Optional(Some(Box::new(base))))
+        } else {
+            Some(base)
         }
     }
 

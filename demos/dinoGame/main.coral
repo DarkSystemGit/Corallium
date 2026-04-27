@@ -7,23 +7,48 @@ import "../../src/std/mem.coral";
 import "../../src/std/string.coral";
 fn init_rand() -> &i32 {
     let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
-    seed_ptr[0]=clock::read();
+    seed_ptr[0]=clock::read()+(1 as i32);
     return seed_ptr as &i32;
 }
 
 fn random(seed_ptr: &i32, start: i16, end: i16) -> i16 {
     let seed: [i32] = seed_ptr as [i32];
-    let current_state: i32 = seed[0];
-    let next_state: i32 = (1103515245 * current_state) + (12345 as i32);
+    let state: i32 = seed[0] % (32768 as i32);
+    if (state < (0 as i32)) {
+        state = state + (32768 as i32);
+    };
+    let next_state: i32 =
+        ((state * (25173 as i32)) + (13849 as i32)) % (32768 as i32);
+    let n: i16 = next_state as i16;
     seed[0] = next_state;
-    let raw_val: i32 = (next_state >> (16 as i32)) & (0x7FFF as i32);
     let range: i16 = end - start + (1 as i16);
-
     if (range <= 0 as i16) {
         return start;
     };
-    return start + ((raw_val as i16) % range);
+    return start + (n % range);
 }
+fn get_score_tiles(score: i16,offset: i16, buf: [i16])->void{
+    for (let i: i16=5;i>=0;i=i-1){
+        let digit: i16 = score % 10;
+        score=score/10;
+        buf[i+offset]=10+digit;
+    };
+    return;
+}
+fn sprites_collide(a: gfx::Sprite,b: gfx::Sprite)->bool{
+    let check1: bool = (a.x as f32)<(b.x as f32+((b.tilemap_width as f32)*8.0*b.scale_x));
+        let check2: bool = ((a.x as f32+((a.tilemap_width as f32)*8.0*a.scale_x))>(b.x as f32));
+        let check3: bool = ((a.y as f32)<((b.y as f32)+((b.tilemap_height as f32)*8.0*b.scale_y)));
+        let check4: bool = ((a.y as f32+((a.tilemap_height as f32)*8.0*a.scale_y))>(b.y as f32));
+        let collide: bool = check1 & check2 & check3 & check4;
+
+  return collide;
+}
+struct Buffer{
+    data: &void,
+    len: i16
+}
+
 fn main()->void{
     let rand_ptr: &i32=init_rand();
     let atlasFile: fs::FileBuf=fs::openFile("atlas.bin");
@@ -31,7 +56,7 @@ fn main()->void{
     gfx::registerAtlas(atlasFile.buf as [i16]);
     let bgTilemap: [i16]=[
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
@@ -46,34 +71,54 @@ fn main()->void{
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
     ];
-    let cloudsTilemap: [i16]=[
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,3,3,3,3,
-    3,3,3,3,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,1,3,3,3,3,1,3,3,3,3,3,3,3,1,
-    3,3,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,3,3,
-    3,3,3,3,3,3,3,3,1,3,3,3,3,3,3,3,3,3,3,3,
+    let titleTilemap: [i16]=[
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,38,39,37,28,23,24,37,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+        3,3,3,3,3,35,37,24,38,38,0,38,39,20,37,39,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
     ];
-    let cactus_slots: [i16;40]=[0;40];
-    let comets: [i16;40]=[0;40];
-    for(let i: i16=0; i<40; i=i+1){
-        let r: i16=random(rand_ptr,0,100);
-        if ((r%5==0)&(r%3==0)){
-            cactus_slots[i]=8;
-        }else{
-            if (r%5==0){
-                cactus_slots[i]=7;
-            };
-        };
-        if (r%15){
-            comets[i]=51;
-        };
-    };
+    let game_over_Tilemap: [i16]=[
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,26,20,32,24,0,34,41,24,37,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,35,37,24,38,38,0,38,39,20,37,39,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    ];
+    let cloudsTilemap: [i16]=[
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,
+    0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,1,0,0,0,0,1,0,0,0,0,0,0,0,1,
+    0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,
+    0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,
+    ];
+    let ui: [i16]=[0,38,22,34,37,24,46,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
     let bgLayer: gfx::Layer=gfx::Layer{
         id: 0,
         x: 0,
         y: 0,
         tilemap_height:15,
-        tilemap_width: 16,
+        tilemap_width: 20,
         tilemap: bgTilemap,
         transform: gfx::Transform::SingleMatrixAffine,
         transformInfo:
@@ -81,11 +126,212 @@ fn main()->void{
         2.0,0.0,
         0.0,2.0,
         ]),
-        loc: Some([96 as i32,60 as i32])
+        loc: Some([80 as i32,60 as i32])
     };
+    let uiLayer: gfx::Layer=gfx::Layer{
+        id: 2,
+        x: 0,
+        y: 0,
+        tilemap_height:1,
+        tilemap_width: 20,
+        tilemap: ui,
+        transform: gfx::Transform::SingleMatrixAffine,
+        transformInfo:
+        Some([
+        1.0,0.0,
+        0.0,1.0,
+        ]),
+        loc: Some([0 as i32,0 as i32])
+    };
+    let cloudLayer: gfx::Sprite=gfx::Sprite{
+    id: 0,
+        priority: 2,
+        x: 0,
+        y: 0,
+        tilemap_height:5,
+        tilemap_width: 20,
+        tilemap: cloudsTilemap,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    let cloudLayerTwo: gfx::Sprite=gfx::Sprite{
+    id: 1,
+        priority: 2,
+        x: -319,
+        y: 0,
+        tilemap_height:5,
+        tilemap_width: 20,
+        tilemap: cloudsTilemap,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    let sun: gfx::Layer=gfx::Layer{
+    id: 1,
+        x: 20,
+        y: 16,
+        tilemap_height:1,
+        tilemap_width: 1,
+        tilemap: [4],
+        transform: gfx::Transform::SingleMatrixAffine,
+        transformInfo:
+        Some([
+        2.0,0.0,
+        0.0,2.0,
+        ]),
+        loc: Some([80 as i32,60 as i32])
+    };
+    let player: gfx::Sprite=gfx::Sprite{
+        id:2,
+        x:148,
+        y: 168,
+        tilemap_height:1,
+        tilemap_width: 1,
+        tilemap: [47],
+        scale_x: 3.0,
+        scale_y: 3.0,
+        priority: 5
+    };
+    let player_accel: f32=0.0;
+    let py_float: f32=168.0;
     gfx::registerLayer(bgLayer);
+    gfx::registerLayer(sun);
+
+    gfx::registerSprite(cloudLayer);
+    gfx::registerSprite(cloudLayerTwo);
+     gfx::registerSprite(player);
+    let controls: [bool;11]=[false;11];
+    while(controls[8]==false){
+        gfx::render();
+        gfx::pullControls(controls);
+        bgLayer.tilemap=titleTilemap;
+    };
+    gfx::registerLayer(uiLayer);
+    bgLayer.tilemap=bgTilemap;
+
+    let cactus_slots: Buffer=Buffer{data: [(None as gfx::Sprite);10] as &void, len: 10};
+    let next_slot: i16=0;
+    let lf: i32=0;
+    let next_id: i16=4;
+    let frame: i32=0 as i32;
+    let cactus_data: [gfx::Sprite]=(cactus_slots.data) as [gfx::Sprite];
+
+    let dead: bool=false;
     while (true){
         gfx::render();
+        get_score_tiles((frame as i16/2) as i16,8,ui);
+        let rand: i16=random(rand_ptr,0,1000);
+        let spawn_slot: i16 = -1;
+                for (let i: i16 = 0; i < 10; i = i + 1) {
+                    if ((spawn_slot == -1) & (cactus_data[i] == (None as gfx::Sprite))) {
+                        spawn_slot = i;
+                    };
+                };
+
+                if (((rand % 100) == 0) & (spawn_slot != -1) & ((frame - lf) > (16 as i32))) {
+                    let tile: i16 = match (rand % 3) {
+                        0 -> 8,
+                        _ -> 7
+                    };
+
+                    let tileBuf: [i16] = mem::alloc(1 as i32) as [i16];
+                    tileBuf[0] = tile;
+
+                    let sprite: gfx::Sprite = gfx::Sprite {
+                        id: next_id,
+                        priority: 3,
+                        x: 320,
+                        y: 176,
+                        tilemap_height: 1,
+                        tilemap_width: 1,
+                        tilemap: tileBuf,
+                        scale_x: 2.0,
+                        scale_y: 2.0,
+                    };
+
+                    let buf: &void = mem::alloc(12 as i32);
+                    mem::copy(sprite as &void, buf, 12 as i32, 0 as i32);
+
+                    // Assign the new cactus to the guaranteed safe slot
+                    cactus_data[spawn_slot] = buf as gfx::Sprite;
+                    gfx::registerSprite(cactus_data[spawn_slot]);
+
+                    next_id = next_id + 1;
+                    lf = frame;
+                };
+        if((frame%(10 as i32))==(0 as i32)){
+            cloudLayer.x=cloudLayer.x-1;
+            cloudLayerTwo.x=cloudLayerTwo.x-1;
+            if(cloudLayer.x==-320){
+            cloudLayer.x=320;
+            };
+            if(cloudLayerTwo.x==-320){
+            cloudLayerTwo.x=320;
+            };
+
+        };
+        for(let i:i16=0;i<10;i=i+1){
+            if(cactus_data[i]!=(None as gfx::Sprite)){
+                cactus_data[i].x=cactus_data[i].x-1;
+                if(sprites_collide(cactus_data[i],player)){
+                    dead=true;
+                };
+                if(cactus_data[i].x<(-16)){
+                    gfx::removeSprite(cactus_data[i]);
+                    mem::free(cactus_data[i].tilemap as &void);
+                    mem::free(cactus_data[i] as &void);
+                    cactus_data[i]=(None as gfx::Sprite);
+                };
+            };
+        };
+        gfx::pullControls(controls);
+        if((controls[0]==true)&(player_accel>-0.1)&(player_accel<0.1)&(py_float>150.0)){
+            player_accel=player_accel-1.5;
+        };
+        if(player_accel!=0.0){
+            player_accel=player_accel+0.02;
+        };
+        if(py_float>168.0){
+            py_float=168.0;
+            player_accel=0.0;
+        };
+        py_float=py_float+player_accel;
+        player.y=(py_float as i16);
+        frame=frame+(1 as i32);
+        if(dead){
+            break;
+        };
+    };
+    player.tilemap=[50];
+    let dead_anim: bool=false;
+    while(controls[8]==false){
+        gfx::render();
+        gfx::pullControls(controls);
+        if(dead_anim==false){
+        for(let i: i16=0; i<150; i=i+1){
+            py_float=py_float-(0.5*((150.0-i as f32)/150.0)+0.1);
+             player.y=(py_float as i16);
+             gfx::render();
+        };
+        for(let i: i16=0; i<250; i=i+1){
+            py_float=py_float+(1.0-((250.0-i as f32)/250.0));
+             player.y=(py_float as i16);
+             gfx::render();
+        };
+        gfx::removeLayer(sun);
+        gfx::removeLayer(uiLayer);
+        gfx::removeSprite(cloudLayer);
+        gfx::removeSprite(cloudLayerTwo);
+        gfx::removeSprite(player);
+        for(let i:i16=0;i<10;i=i+1){
+            if(cactus_data[i]!=(None as gfx::Sprite)){
+                gfx::removeSprite(cactus_data[i]);
+                mem::free(cactus_data[i].tilemap as &void);
+                mem::free(cactus_data[i] as &void);
+            };
+        };
+        bgLayer.tilemap=game_over_Tilemap;
+        dead_anim=true;
+        };
     };
     return;
 }

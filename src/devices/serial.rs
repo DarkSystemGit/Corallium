@@ -35,6 +35,18 @@ pub fn driver(machine: &mut Machine, command: i16, _device_id: usize) {
                 println!("IO.serial.writeNum {}", value);
             }
         }
+        2 => {
+            //writeFloat(f32)
+            let dt = machine.core.stack.pop(&mut machine.core.srp);
+            let value = unpack_dt(dt) as f32;
+            print!("{}\n", value);
+            io::stdout()
+                .flush()
+                .expect("Failed to flush serial console output");
+            if machine.debug {
+                println!("IO.serial.writeFloat {}", value);
+            }
+        }
         _ => {}
     }
 }

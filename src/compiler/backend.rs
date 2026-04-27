@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 //DISCLAIMER:
 //The register allocation code in this file is mostly ai-generated(gemini&claude), due to my lack of knowlage on the subject.
-// I regert using AI, as it prob mad me spend more time than I need to debugging, but oh well.
+// I regert using AI, as it prob made me spend more time than I need to debugging, but oh well.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PhysReg {
     R1,
@@ -342,7 +342,7 @@ impl Backend {
         let after = self.current_cmd_idx;
         self.next_use_map
             .get(&virt_id)
-            .and_then(|uses| uses.iter().find(|&&u| u > after).copied())
+            .and_then(|uses| uses.iter().find(|&&u| u >= after).copied())
             .unwrap_or(usize::MAX)
     }
 
@@ -539,18 +539,18 @@ impl Backend {
                 if self.functions[self.loc.0].name == "main" {
                     self.emit(Inst::OpCode(OpCode::Exit));
                 } else {
-                    let has_val = if let Some(val) = val_opt {
+                    let returned_values = if let Some(val) = val_opt {
                         let ty = self.get_cmd_type(&self.get_val_ty(val));
                         let op = self.resolve_and_free(val);
                         self.emit(Inst::OpCode(OpCode::Stack(StackOp::Push, ty)));
                         self.emit(op);
-                        true
+                        1
                     } else {
-                        false
+                        0
                     };
                     self.emit(Inst::OpCode(OpCode::Return));
                     self.emit(Inst::Immediate(Immediate {
-                        value: has_val as u8 as f64,
+                        value: returned_values as f64,
                         ty: TypeKind::Uint16,
                     }));
                     self.emit(Inst::SymbolSecLen);
@@ -784,8 +784,12 @@ impl Backend {
     fn claim_reg(&mut self, reg: PhysReg, virt_id: usize) {
         let func = &mut self.functions[self.loc.0];
         let aliases: Vec<PhysReg> = match reg {
-            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => Self::alias_group(reg).to_vec(),
-            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => Self::alias_group(reg).to_vec(),
+            PhysReg::EX1 => vec![PhysReg::EX1, PhysReg::R2, PhysReg::R3],
+            PhysReg::R2 => vec![PhysReg::R2, PhysReg::EX1],
+            PhysReg::R3 => vec![PhysReg::R3, PhysReg::EX1],
+            PhysReg::EX2 => vec![PhysReg::EX2, PhysReg::R4, PhysReg::R5],
+            PhysReg::R4 => vec![PhysReg::R4, PhysReg::EX2],
+            PhysReg::R5 => vec![PhysReg::R5, PhysReg::EX2],
             _ => vec![reg],
         };
         for alias in aliases {
@@ -793,12 +797,12 @@ impl Backend {
                 if prev_owner != virt_id {
                     if let Some(RegLoc::Physical(p)) = func.virt_locs.get(&prev_owner).copied() {
                         if match reg {
-                            PhysReg::EX1 | PhysReg::R2 | PhysReg::R3 => {
-                                Self::alias_group(reg).contains(&p)
-                            }
-                            PhysReg::EX2 | PhysReg::R4 | PhysReg::R5 => {
-                                Self::alias_group(reg).contains(&p)
-                            }
+                            PhysReg::EX1 => [PhysReg::EX1, PhysReg::R2, PhysReg::R3].contains(&p),
+                            PhysReg::R2 => [PhysReg::R2, PhysReg::EX1].contains(&p),
+                            PhysReg::R3 => [PhysReg::R3, PhysReg::EX1].contains(&p),
+                            PhysReg::EX2 => [PhysReg::EX2, PhysReg::R4, PhysReg::R5].contains(&p),
+                            PhysReg::R4 => [PhysReg::R4, PhysReg::EX2].contains(&p),
+                            PhysReg::R5 => [PhysReg::R5, PhysReg::EX2].contains(&p),
                             _ => p == alias,
                         } {
                             if let Some(&perm) = func.permanent_stack_slots.get(&prev_owner) {

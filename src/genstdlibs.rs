@@ -50,6 +50,19 @@ fn gen_gfx() -> io::Result<()> {
 
     #[rustfmt::skip]
     gfx.add_fn(Fn::new_with_blocks(
+        "removeSprite".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID),         Bytecode::Int(7),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    gfx.add_fn(Fn::new_with_blocks(
         "registerLayer".to_string(),
         vec![2],
         vec![vec![
@@ -57,6 +70,19 @@ fn gen_gfx() -> io::Result<()> {
             Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID),         Bytecode::Int(1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    gfx.add_fn(Fn::new_with_blocks(
+        "removeLayer".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID),         Bytecode::Int(8),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));
@@ -284,6 +310,19 @@ fn gen_serial() -> io::Result<()> {
             Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(SERIAL_DEVICE_ID),       Bytecode::Int(1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                      Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    serial.add_fn(Fn::new_with_blocks(
+        "writeFloat".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::Loadf), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::Pushf), Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(SERIAL_DEVICE_ID),       Bytecode::Int(2),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                      Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));

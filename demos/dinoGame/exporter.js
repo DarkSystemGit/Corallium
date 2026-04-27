@@ -30,10 +30,17 @@ function convertToRGBA(buffer) {
     const b = buffer[i + 1];
     const a = buffer[i + 2];
     const r = buffer[i + 3];
-    rgbaBuffer[i] = r;
-    rgbaBuffer[i + 1] = g;
-    rgbaBuffer[i + 2] = b;
-    rgbaBuffer[i + 3] = a;
+    if (r + g + b + a == 255) {
+      rgbaBuffer[i] = 0;
+      rgbaBuffer[i + 1] = 0;
+      rgbaBuffer[i + 2] = 0;
+      rgbaBuffer[i + 3] = 0;
+    } else {
+      rgbaBuffer[i] = r;
+      rgbaBuffer[i + 1] = g;
+      rgbaBuffer[i + 2] = b;
+      rgbaBuffer[i + 3] = a;
+    }
   }
   return rgbaBuffer;
 }

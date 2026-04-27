@@ -91,6 +91,38 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 println!("IO.gfx.registerSprite %{}", ptr);
             }
         }
+        7 => {
+            //removeSprite(&Sprite)
+            //Stops rendering a sprite pointer and clears cached state for that id
+            let ptr = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let id = usize::try_from(machine.memory.read(ptr, machine))
+                .expect("Sprite id must be non-negative");
+            let gs = get_gs(machine, device_id);
+            gs.ptrs.sprites.retain(|x| *x != ptr);
+            if let Some(sprite) = gs.sprites.1.get_mut(id) {
+                *sprite = None;
+            }
+            if machine.debug {
+                println!("IO.gfx.removeSprite %{}", ptr);
+            }
+        }
+        8 => {
+            //removeLayer(&Layer)
+            //Stops rendering a layer pointer and clears cached state for that id
+            let ptr = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let id = usize::try_from(machine.memory.read(ptr, machine))
+                .expect("Layer id must be non-negative");
+            let gs = get_gs(machine, device_id);
+            gs.ptrs.layers.retain(|x| *x != ptr);
+            if let Some(layer) = gs.background_layers.get_mut(id) {
+                layer.clear();
+                layer.offset = [0, 0];
+                layer.render_type = RenderType::Regular;
+            }
+            if machine.debug {
+                println!("IO.gfx.removeLayer %{}", ptr);
+            }
+        }
         3 => {
             //render()
             //render layers & sprites
@@ -238,9 +270,18 @@ fn load_sprite(ptr: usize, machine: &mut Machine, device_id: usize) {
     // i16 tilemap_height
     // i16 tilemap_width
     // *[i16] tilemap
-    let rsprite = machine.memory.read_range(ptr..ptr + 8, machine);
+    // f32 scale_x
+    // f32 scale_y
+    let rsprite = machine.memory.read_range(ptr..ptr + 12, machine);
+    let sprite_id = usize::try_from(rsprite[0]).expect("Sprite id must be non-negative");
     let tilemapptr =
         convert_i16_to_u32(&[rsprite[6], rsprite[7]]).expect("Couldn't get tilemap ptr") as usize;
+    let scale_x = unpack_float(&rsprite[8..10])
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 16.0)
+        .unwrap_or(1.0);
+    let scale_y = unpack_float(&rsprite[10..12])
+        .filter(|v| v.is_finite() && *v > 0.0 && *v <= 16.0)
+        .unwrap_or(1.0);
     let tiles = machine
         .memory
         .read_range(
@@ -251,14 +292,15 @@ fn load_sprite(ptr: usize, machine: &mut Machine, device_id: usize) {
         .map(|x| *x as usize)
         .collect();
     let gs: &mut GraphicsSystem = get_gs(machine, device_id);
-    match gs.sprite_exists(rsprite[0] as u8) {
+    match gs.sprite_exists(sprite_id) {
         true => {
-            let sprite = gs.get_sprite(rsprite[0] as u8);
+            let sprite = gs.get_sprite(sprite_id);
             sprite.loc = [rsprite[1] as i32, rsprite[2] as i32];
             sprite.priority = rsprite[3] as u8;
             sprite.tilemap.height = rsprite[4] as usize;
             sprite.tilemap.width = rsprite[5] as usize;
             sprite.tilemap.tiles = tiles;
+            sprite.scale = [scale_x, scale_y];
         }
         false => {
             let mut tilemap = gs.get_tilemap(rsprite[5] as usize, rsprite[4] as usize);
@@ -267,10 +309,11 @@ fn load_sprite(ptr: usize, machine: &mut Machine, device_id: usize) {
                 tilemap,
                 [rsprite[1] as i32, rsprite[2] as i32],
                 rsprite[3] as u8,
+                [scale_x, scale_y],
             );
-            sprite.id = rsprite[0] as u8;
-            gs.sprites.1.resize(rsprite[0] as usize + 1, None);
-            gs.sprites.1[rsprite[0] as usize] = Some(sprite);
+            sprite.id = sprite_id;
+            gs.sprites.1.resize(sprite_id + 1, None);
+            gs.sprites.1[sprite_id] = Some(sprite);
         }
     }
 }
@@ -558,18 +601,16 @@ impl GraphicsSystem {
     pub fn get_pixel(&mut self, x: usize, y: usize) -> u32 {
         self.display.buffer[y * self.display.width + x]
     }
-    pub fn add_sprite(&mut self, mut sprite: Sprite) -> u8 {
-        sprite.id = self.sprites.1.len() as u8;
+    pub fn add_sprite(&mut self, mut sprite: Sprite) -> usize {
+        sprite.id = self.sprites.1.len();
         self.sprites.1.push(Some(sprite));
-        (self.sprites.1.len() - 1) as u8
+        self.sprites.1.len() - 1
     }
-    pub fn get_sprite(&mut self, id: u8) -> &mut Sprite {
-        self.sprites.1[id as usize]
-            .as_mut()
-            .expect("nonexistent sprite")
+    pub fn get_sprite(&mut self, id: usize) -> &mut Sprite {
+        self.sprites.1[id].as_mut().expect("nonexistent sprite")
     }
-    pub fn sprite_exists(&mut self, id: u8) -> bool {
-        self.sprites.1.len() > id as usize
+    pub fn sprite_exists(&self, id: usize) -> bool {
+        matches!(self.sprites.1.get(id), Some(Some(_)))
     }
     pub fn set_tile(&mut self, loc: Point, layer: u8, tile_id: usize) {
         self.background_layers[layer as usize]
@@ -586,17 +627,16 @@ impl GraphicsSystem {
             layer.render(&mut self.display.buffer, self.display.width as u32);
         }
         let mut sprites = self.sprites.1.clone();
+
         sprites.sort_by_key(|sprite| match sprite.is_some() {
             true => sprite.as_ref().unwrap().priority,
             false => 0,
         });
         for sprite in sprites {
             if let Some(sprite) = sprite {
-                sprite.tilemap.render(
-                    [
-                        sprite.loc[0] + self.sprites.0[0],
-                        sprite.loc[1] + self.sprites.0[1],
-                    ],
+                //dbg!(sprite.id);
+                sprite.render(
+                    self.sprites.0,
                     &mut self.display.buffer,
                     self.display.width as u32,
                 );
@@ -621,19 +661,29 @@ pub struct Sprite {
     pub tilemap: TileMap,
     pub loc: Point,
     pub priority: u8,
-    pub id: u8,
+    pub id: usize,
+    pub scale: [f32; 2],
 }
 impl Sprite {
-    pub fn new(tilemap: TileMap, loc: Point, priority: u8) -> Sprite {
+    pub fn new(tilemap: TileMap, loc: Point, priority: u8, scale: [f32; 2]) -> Sprite {
         Sprite {
             tilemap,
             loc,
             priority,
             id: 0,
+            scale,
         }
     }
-    fn render(&self, buf: &mut Vec<u32>, buf_width: u32) {
-        self.tilemap.render(self.loc, buf, buf_width);
+    fn render(&self, global_offset: Point, buf: &mut Vec<u32>, buf_width: u32) {
+        self.tilemap.render_scaled(
+            [
+                self.loc[0] + global_offset[0],
+                self.loc[1] + global_offset[1],
+            ],
+            buf,
+            buf_width,
+            self.scale,
+        );
     }
 }
 #[derive(Debug)]
@@ -675,6 +725,58 @@ impl TileMap {
             self.atlas
                 .borrow()
                 .render_tile(*tile, [x, y], buf, buf_width);
+        }
+    }
+    fn render_scaled(&self, loc: Point, buf: &mut Vec<u32>, buf_width: u32, scale: [f32; 2]) {
+        let scale_x = if scale[0].is_finite() && scale[0] > 0.0 {
+            scale[0]
+        } else {
+            1.0
+        };
+        let scale_y = if scale[1].is_finite() && scale[1] > 0.0 {
+            scale[1]
+        } else {
+            1.0
+        };
+        if (scale_x - 1.0).abs() < f32::EPSILON && (scale_y - 1.0).abs() < f32::EPSILON {
+            self.render(loc, buf, buf_width);
+            return;
+        }
+
+        let src_width = (self.width * 8) as i32;
+        let src_height = (self.height * 8) as i32;
+        let mut src_buf = vec![0; (src_width * src_height) as usize];
+        self.render([0, 0], &mut src_buf, src_width as u32);
+
+        let dst_width = ((src_width as f32) * scale_x).round().max(1.0) as i32;
+        let dst_height = ((src_height as f32) * scale_y).round().max(1.0) as i32;
+        let buf_height = (buf.len() as u32 / buf_width) as i32;
+        let buf_width_i32 = buf_width as i32;
+
+        for y_dest in 0..dst_height {
+            let out_y = loc[1] + y_dest;
+            if out_y < 0 || out_y >= buf_height {
+                continue;
+            }
+            let src_y = (y_dest as f32 / scale_y).floor() as i32;
+            if src_y < 0 || src_y >= src_height {
+                continue;
+            }
+
+            for x_dest in 0..dst_width {
+                let out_x = loc[0] + x_dest;
+                if out_x < 0 || out_x >= buf_width_i32 {
+                    continue;
+                }
+                let src_x = (x_dest as f32 / scale_x).floor() as i32;
+                if src_x < 0 || src_x >= src_width {
+                    continue;
+                }
+                let pixel = src_buf[src_x as usize + src_y as usize * src_width as usize];
+                if pixel != 0 {
+                    buf[out_x as usize + out_y as usize * buf_width as usize] = pixel;
+                }
+            }
         }
     }
     //matrix: [[horizontal scale,horizontal rotation],[vertical rotation,vertical scale]]

@@ -1861,8 +1861,6 @@ impl IrGen {
                         if let Expression::Identifier(prop) = *rhs {
                             let fieldTy = fields.get(&prop).clone();
                             if let Some(fieldTy) = fieldTy {
-                                // FIX: only sum fields that come before `prop`,
-                                // not all fields (which would give total struct size).
                                 let offset =
                                     fields.keys().take_while(|k| *k != &prop).fold(0, |acc, k| {
                                         acc + self.size_of(fields[k].clone(), loc).expect(

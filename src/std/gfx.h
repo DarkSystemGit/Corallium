@@ -11,6 +11,8 @@ struct Sprite {
     tilemap_height: i16,
     tilemap_width: i16,
     tilemap: [i16],
+    scale_x: f32,
+    scale_y: f32,
 }
 struct Layer {
     id: i16,
@@ -25,7 +27,9 @@ struct Layer {
 }
 fn registerAtlas(atlas: [i16]) -> void {}
 fn registerSprite(sprite: Sprite) -> void {}
+fn removeSprite(sprite: Sprite) -> void {}
 fn registerLayer(layer: Layer) -> void {}
+fn removeLayer(layer: Layer) -> void {}
 fn render() -> void {}
 fn pullControls(writeLoc: [bool; 11]) -> void {}
 fn setPixel(x: i16, y: i16, color: i32) -> void {}

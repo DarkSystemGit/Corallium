@@ -30,10 +30,10 @@ Compile to a serialized disk image (`.cart`):
 cargo run -- --compile --file test/importTest.coral
 ```
 
-Link one or more extra files into the disk image:
+Link one or more extra files or directories into the disk image:
 
 ```bash
-cargo run -- --compile --file test/importTest.coral --link path/to/file1 path/to/file2
+cargo run -- --compile --file test/importTest.coral --link path/to/file1 path/to/dir
 ```
 
 Run from a serialized disk image:
@@ -86,7 +86,7 @@ Device I/O is invoked as `IO(device_id, command_id)`, with command arguments pas
 | `0` | Disk | `0=read`, `1=write`, `2=loadSectors` |
 | `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound` |
 | `2` | Clock | `0=read` |
-| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel` |
+| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer` |
 | `4` | Serial | `0=write (null-terminated string ptr)`, `1=writeNum (i32)` |
 
 Graphics control mapping:

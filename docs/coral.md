@@ -190,6 +190,8 @@ If the value must outlive the function return, allocate backing storage (for exa
   - `tilemap_height: i16`
   - `tilemap_width: i16`
   - `tilemap: [i16]`
+  - `scale_x: f32`
+  - `scale_y: f32`
 - `struct Layer`
   - `id: i16`
   - `x: i16`
@@ -207,9 +209,11 @@ If the value must outlive the function return, allocate backing storage (for exa
 | --- | --- |
 | `fn registerAtlas(atlas: [i16]) -> void` | Register a tile atlas. |
 | `fn registerSprite(sprite: Sprite) -> void` | Register/update a sprite. |
+| `fn removeSprite(sprite: Sprite) -> void` | Unregister a sprite using the same sprite pointer used for registration. |
 | `fn registerLayer(layer: Layer) -> void` | Register/update a layer. |
+| `fn removeLayer(layer: Layer) -> void` | Unregister a layer using the same layer pointer used for registration. |
 | `fn render() -> void` | Render the current frame. |
-| `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array. |
+| `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array, order [A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger] |
 | `fn setPixel(x: i16, y: i16, color: i32) -> void` | Set a pixel color. |
 | `fn getPixel(x: i16, y: i16) -> i32` | Read a pixel color. |
 
@@ -218,7 +222,7 @@ If the value must outlive the function return, allocate backing storage (for exa
 Render flow:
 
 1. `registerAtlas` uploads tile data.
-2. `registerLayer` and `registerSprite` register/update objects by `id`.
+2. `registerLayer` and `registerSprite` register/update objects by `id`; `removeLayer` and `removeSprite` unregister by pointer.
 3. `render()` draws all layers first, then sprites.
 
 Layer transform modes:
@@ -226,6 +230,11 @@ Layer transform modes:
 - `Flat`: direct tilemap draw at `(x, y)`.
 - `SingleMatrixAffine`: one 2x2 matrix for the whole frame.
 - `MultiMatrixAffine`: one 2x2 matrix per screen row (scanline).
+
+Sprite scaling:
+
+- `scale_x` and `scale_y` are nearest-neighbor scale factors for sprite rendering.
+- Use `1.0` for normal size, values above `1.0` to enlarge, and values between `0.0` and `1.0` to shrink.
 
 Affine inputs:
 

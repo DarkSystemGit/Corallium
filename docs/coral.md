@@ -248,20 +248,36 @@ Math used by affine modes:
 
 For each destination pixel `(x_d, y_d)`, the renderer samples from source `(x_s, y_s)` using the inverse of the selected matrix:
 
-```text
-M = [a b]
-    [c d]
+GitHub uses a specific flavor of Markdown that supports LaTeX through the use of `$` for inline math and `$$` for block math. Here is the content ready to be pasted directly into your `README.md` or GitHub issue.
 
-det = a*d - b*c
-M^-1 = (1/det) * [ d -b]
-                  [-c  a]
+---
 
-rx = x_d - screen_center_x
-ry = y_d - screen_center_y
+### Math used by Affine Modes
 
-[x_s]   [im00 im01] [rx]   [screen_center_x]
-[y_s] = [im10 im11] [ry] + [screen_center_y]
+For each destination pixel $(x_d, y_d)$, the renderer samples from source $(x_s, y_s)$ using the inverse of the selected matrix:
+
+#### Matrix Definition and Inversion
+
+$$M = \begin{bmatrix} a & b \\ c & d \end{bmatrix}$$
+
+$$\det(M) = ad - bc$$
+
+$$M^{-1} = \frac{1}{\det(M)} \begin{bmatrix} d & -b \\ -c & a \end{bmatrix}$$
+
+#### Coordinate Transformation
+
+To calculate the source coordinates, we first find the relative distance from the screen center:
+```math
+r_x = x_d - \text{screen\_center}_x
+r_y = y_d - \text{screen\_center}_y
 ```
+Then, we apply the inverse matrix elements ($im_{nn}$) to map back to the source:
+
+
+```math
+\begin{bmatrix} x_s \\ y_s \end{bmatrix} = \begin{bmatrix} im_{00} & im_{01} \\ im_{10} & im_{11} \end{bmatrix} \begin{bmatrix} r_x \\ r_y \end{bmatrix} + \begin{bmatrix} \text{screen\_center}_x \\ \text{screen\_center}_y \end{bmatrix}
+```
+---
 
 - `SingleMatrixAffine` uses one `M` for every scanline.
 - `MultiMatrixAffine` picks `M[y_d]`, so each scanline can warp differently.

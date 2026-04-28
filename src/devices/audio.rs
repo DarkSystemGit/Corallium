@@ -304,7 +304,11 @@ fn gen_wave(
     let mut loaded_channels = Vec::with_capacity(10);
     move |data| {
         for (id, update) in rx.try_iter().take(50) {
+            let reset_clock = matches!(&update, ChannelUpdate::WaveSample(_));
             modify_channel_collection_item(id, &channels, update);
+            if reset_clock && id < channel_clocks.len() {
+                channel_clocks[id] = 0.0;
+            }
         }
         loaded_channels.clear();
         for channel in channels.iter() {
@@ -315,15 +319,21 @@ fn gen_wave(
             let mut value_l = 0.0;
             let mut value_r = 0.0;
             for (i, channel) in loaded_channels.iter().enumerate() {
-                if let Some(freq) = channel.freq {
+                let raw_val = if let Some(freq) = channel.freq {
                     if freq > 0.0 {
                         // Increment phase: (frequency / sample_rate) gives the % of the cycle per sample
                         channel_clocks[i] = (channel_clocks[i] + freq / sample_rate as f32) % 1.0;
                     }
+                    channel.play(channel_clocks[i])
                 } else if let Some(sample) = &channel.wave_sample {
-                    channel_clocks[i] = (channel_clocks[i] + 1.0) % sample.len() as f32;
-                }
-                let raw_val = channel.play(channel_clocks[i]);
+                    let val = channel.play(channel_clocks[i]);
+                    if !sample.is_empty() && channel_clocks[i] < sample.len() as f32 {
+                        channel_clocks[i] += 1.0;
+                    }
+                    val
+                } else {
+                    channel.play(channel_clocks[i])
+                };
                 value_l += raw_val * channel.pan[0];
                 value_r += raw_val * channel.pan[1];
             }
@@ -386,7 +396,11 @@ impl Channel {
             wave_func(phase, self.volume)
         } else if let Some(sample) = &self.wave_sample {
             // phase is the index for raw samples
-            sample[phase as usize % sample.len()] * self.volume
+            if phase < (sample.len() as f32) {
+                sample[phase as usize] * self.volume
+            } else {
+                0.0
+            }
         } else {
             0.0
         }

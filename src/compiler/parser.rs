@@ -201,6 +201,8 @@ pub enum BinaryOperator {
     Shr,
     PropertyAccess,
     Assign,
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Debug, Clone)]
@@ -902,6 +904,14 @@ impl Parser {
                     };
                     Expression::Binary(Box::new(lhs), bin_op, Box::new(rhs))
                 }
+                TokenKind::Keyword(KeywordKind::And) => {
+                    let rhs = self.parse_expr_bp(r_bp)?;
+                    Expression::Binary(Box::new(lhs), BinaryOperator::LogicalAnd, Box::new(rhs))
+                }
+                TokenKind::Keyword(KeywordKind::Or) => {
+                    let rhs = self.parse_expr_bp(r_bp)?;
+                    Expression::Binary(Box::new(lhs), BinaryOperator::LogicalOr, Box::new(rhs))
+                }
                 TokenKind::Keyword(KeywordKind::As) => {
                     let ty = self.matchType()?;
                     Expression::Cast(ty, Box::new(lhs))
@@ -934,6 +944,8 @@ impl Parser {
             TokenKind::LeftParen => Some((100, 0)),
             TokenKind::LeftBracket => Some((100, 0)),
             TokenKind::Keyword(KeywordKind::As) => Some((90, 91)),
+            TokenKind::Keyword(KeywordKind::And) => Some((15, 16)),
+            TokenKind::Keyword(KeywordKind::Or) => Some((14, 15)),
             TokenKind::Operator(op) => match op {
                 OperatorKind::Asterisk | OperatorKind::Div | OperatorKind::Mod => Some((80, 81)),
                 OperatorKind::Add | OperatorKind::Negate => Some((70, 71)),

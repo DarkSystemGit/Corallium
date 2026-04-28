@@ -4,7 +4,6 @@ import "../../src/std/gfx.h";
 import "../../src/std/audio.h";
 import "../../src/std/clock.h";
 import "../../src/std/mem.coral";
-import "../../src/std/string.coral";
 fn init_rand() -> &i32 {
     let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
     seed_ptr[0]=clock::read()+(1 as i32);
@@ -50,8 +49,28 @@ struct Buffer{
 }
 
 fn main()->void{
-    let rand_ptr: &i32=init_rand();
-    let atlasFile: fs::FileBuf=fs::openFile("atlas.bin");
+
+    let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
+    fs::readFile(boot_screen_file,0 as i32,None);
+    let bitmap: gfx::Bitmap=gfx::Bitmap{
+        width: 320,
+        length: 240,
+        data: boot_screen_file.buf as [i32]
+    };
+    let startup: fs::FileBuf=fs::openFile("linked/startup.raw");
+     fs::readFile(startup, 0 as i32, None);
+    audio::loadSound(9,startup.buf as [f32],(startup.len));
+    fs::closeFile(startup);
+    gfx::registerBitmap(bitmap);
+    for(let i: i16=0;i<75;i=i+1){
+        gfx::render();
+    };
+    gfx::removeBitmap(bitmap);
+    fs::closeFile(boot_screen_file);
+    let title: fs::FileBuf=fs::openFile("linked/title.bitmap");
+     fs::readFile(title,0 as i32,None);
+     bitmap.data=title.buf as [i32];
+    let atlasFile: fs::FileBuf=fs::openFile("linked/atlas.bin");
     fs::readFile(atlasFile,0 as i32,None);
     gfx::registerAtlas(atlasFile.buf as [i16]);
     let bgTilemap: [i16]=[
@@ -67,26 +86,14 @@ fn main()->void{
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
     ];
-    let titleTilemap: [i16]=[
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,38,39,37,28,23,24,37,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-        3,3,3,3,3,35,37,24,38,38,0,38,39,20,37,39,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+    let groundTilemap: [i16]=[
+        2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+        2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+        2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
     ];
     let game_over_Tilemap: [i16]=[
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
@@ -102,7 +109,7 @@ fn main()->void{
         0,0,0,0,35,37,24,38,38,0,38,39,20,37,39,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,50,0,0,0,0,0,0,0,0,0,0,
         0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     ];
     let cloudsTilemap: [i16]=[
@@ -165,6 +172,28 @@ fn main()->void{
         scale_x: 2.0,
         scale_y: 2.0,
     };
+    let ground: gfx::Sprite=gfx::Sprite{
+    id: 2,
+        priority: 2,
+        x: 0,
+        y: 192,
+        tilemap_height:3,
+        tilemap_width: 21,
+        tilemap: groundTilemap,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    let groundTwo: gfx::Sprite=gfx::Sprite{
+    id: 3,
+        priority: 2,
+        x: -319,
+        y: 192,
+        tilemap_height:3,
+        tilemap_width: 21,
+        tilemap: groundTilemap,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
     let sun: gfx::Layer=gfx::Layer{
     id: 1,
         x: 20,
@@ -181,7 +210,7 @@ fn main()->void{
         loc: Some([80 as i32,60 as i32])
     };
     let player: gfx::Sprite=gfx::Sprite{
-        id:2,
+        id:4,
         x:148,
         y: 168,
         tilemap_height:1,
@@ -193,25 +222,29 @@ fn main()->void{
     };
     let player_accel: f32=0.0;
     let py_float: f32=168.0;
+
     gfx::registerLayer(bgLayer);
     gfx::registerLayer(sun);
-
+    gfx::registerSprite(ground);
+    gfx::registerSprite(groundTwo);
     gfx::registerSprite(cloudLayer);
     gfx::registerSprite(cloudLayerTwo);
      gfx::registerSprite(player);
+     gfx::registerBitmap(bitmap);
     let controls: [bool;11]=[false;11];
     while(controls[8]==false){
         gfx::render();
         gfx::pullControls(controls);
-        bgLayer.tilemap=titleTilemap;
     };
+    gfx::removeBitmap(bitmap);
+    fs::closeFile(title);
     gfx::registerLayer(uiLayer);
-    bgLayer.tilemap=bgTilemap;
+       let rand_ptr: &i32=init_rand();
 
-    let cactus_slots: Buffer=Buffer{data: [(None as gfx::Sprite);10] as &void, len: 10};
+    let cactus_slots: Buffer=Buffer{data: [(None as gfx::Sprite);30] as &void, len: 30};
     let next_slot: i16=0;
     let lf: i32=0;
-    let next_id: i16=4;
+    let next_id: i16=5;
     let frame: i32=0 as i32;
     let cactus_data: [gfx::Sprite]=(cactus_slots.data) as [gfx::Sprite];
 
@@ -220,14 +253,18 @@ fn main()->void{
         gfx::render();
         get_score_tiles((frame as i16/2) as i16,8,ui);
         let rand: i16=random(rand_ptr,0,1000);
+        let speed: i16=((1.0*((frame as f32)/(5000 as f32))+1.0) as i16);
         let spawn_slot: i16 = -1;
-                for (let i: i16 = 0; i < 10; i = i + 1) {
+                for (let i: i16 = 0; i < 30; i = i + 1) {
                     if ((spawn_slot == -1) & (cactus_data[i] == (None as gfx::Sprite))) {
                         spawn_slot = i;
                     };
                 };
 
-                if (((rand % 100) == 0) & (spawn_slot != -1) & ((frame - lf) > (16 as i32))) {
+
+                if (((rand % 100) == 0) & (spawn_slot != -1) & ((frame - lf) > ((16/speed) as i32))) {
+                    rand=random(rand_ptr,0,1000);
+                    if((rand%5)!=0){
                     let tile: i16 = match (rand % 3) {
                         0 -> 8,
                         _ -> 7
@@ -250,45 +287,145 @@ fn main()->void{
 
                     let buf: &void = mem::alloc(12 as i32);
                     mem::copy(sprite as &void, buf, 12 as i32, 0 as i32);
-
-                    // Assign the new cactus to the guaranteed safe slot
                     cactus_data[spawn_slot] = buf as gfx::Sprite;
                     gfx::registerSprite(cactus_data[spawn_slot]);
 
                     next_id = next_id + 1;
                     lf = frame;
+                    }else{
+                        if(rand%3!=0){
+                        if((frame - lf) > ((48/speed) as i32)){
+                            let tileBuf: [i16] = mem::alloc(1 as i32) as [i16];
+                            tileBuf[0] = 5;
+                            let sprite: gfx::Sprite = gfx::Sprite {
+                            id: next_id,
+                            priority: 3,
+                            x: 320,
+                            y: 120,
+                            tilemap_height: 1,
+                            tilemap_width: 1,
+                            tilemap: tileBuf,
+                            scale_x: 2.0,
+                            scale_y: 2.0,
+                            };
+
+                            let buf: &void = mem::alloc(12 as i32);
+                            mem::copy(sprite as &void, buf, 12 as i32, 0 as i32);
+                            cactus_data[spawn_slot] = buf as gfx::Sprite;
+                            gfx::registerSprite(cactus_data[spawn_slot]);
+                            next_id = next_id + 1;
+                            lf = frame;
+                        };
+                    }else{
+                        let tileBuf: [i16] = mem::alloc(1 as i32) as [i16];
+                        tileBuf[0] = 9;
+                        let sprite: gfx::Sprite = gfx::Sprite {
+                        id: next_id,
+                        priority: 3,
+                        x: 320,
+                        y: -16,
+                        tilemap_height: 1,
+                        tilemap_width: 1,
+                        tilemap: tileBuf,
+                        scale_x: 2.0,
+                        scale_y: 2.0,
+                        };
+
+                        let buf: &void = mem::alloc(12 as i32);
+                        mem::copy(sprite as &void, buf, 12 as i32, 0 as i32);
+                        cactus_data[spawn_slot] = buf as gfx::Sprite;
+                        gfx::registerSprite(cactus_data[spawn_slot]);
+                        next_id = next_id + 1;
+                        lf = frame;
+                    };
                 };
+
+};
+        let walk_speed: i16=10/speed;
+        if(walk_speed<1){walk_speed=1;};
+        if((frame%(walk_speed as i32))==(0 as i32)){
+            if(player.tilemap[0]==47){
+                player.tilemap[0]=51;
+            }else{
+                player.tilemap[0]=47;
+            };
+        };
         if((frame%(10 as i32))==(0 as i32)){
+
             cloudLayer.x=cloudLayer.x-1;
             cloudLayerTwo.x=cloudLayerTwo.x-1;
-            if(cloudLayer.x==-320){
+            if(cloudLayer.x<=-320){
             cloudLayer.x=320;
             };
-            if(cloudLayerTwo.x==-320){
+            if(cloudLayerTwo.x<=-320){
             cloudLayerTwo.x=320;
             };
 
         };
-        for(let i:i16=0;i<10;i=i+1){
+        ground.x=ground.x-speed;
+        groundTwo.x=groundTwo.x-speed;
+        if(ground.x<=-320){
+        ground.x=320;
+        };
+        if(groundTwo.x<=-320){
+        groundTwo.x=320;
+        };
+        for(let i:i16=0;i<30;i=i+1){
             if(cactus_data[i]!=(None as gfx::Sprite)){
-                cactus_data[i].x=cactus_data[i].x-1;
+                cactus_data[i].x=cactus_data[i].x-speed;
+                if(((frame%(2 as i32))==(0 as i32))&((cactus_data[i].tilemap[0]==5)|(cactus_data[i].tilemap[0]==6))){
+                    cactus_data[i].x=cactus_data[i].x-speed;
+                };
+                if((frame%(10 as i32))==(0 as i32)){
+
+                if (cactus_data[i].tilemap[0]==5){
+
+                    cactus_data[i].tilemap[0]=6;
+
+                }else{
+                if (cactus_data[i].tilemap[0]==6){
+
+                     cactus_data[i].tilemap[0]=5;
+
+                };};};
+                if((frame%(random(rand_ptr,0,4) as i32))==(0 as i32)){
+
+                if (cactus_data[i].tilemap[0]==9){
+
+                    cactus_data[i].y=cactus_data[i].y+2;};
+                    if(cactus_data[i].y>184){
+                        gfx::removeSprite(cactus_data[i]);
+
+
+                        mem::free(cactus_data[i].tilemap as &void);
+                         mem::free(cactus_data[i] as &void);
+
+
+                        cactus_data[i]=(None as gfx::Sprite);
+                    };
+
+                };
                 if(sprites_collide(cactus_data[i],player)){
-                    dead=true;
+                   dead=true;
                 };
                 if(cactus_data[i].x<(-16)){
                     gfx::removeSprite(cactus_data[i]);
+
+
                     mem::free(cactus_data[i].tilemap as &void);
-                    mem::free(cactus_data[i] as &void);
+                     mem::free(cactus_data[i] as &void);
+
+
                     cactus_data[i]=(None as gfx::Sprite);
                 };
             };
         };
         gfx::pullControls(controls);
         if((controls[0]==true)&(player_accel>-0.1)&(player_accel<0.1)&(py_float>150.0)){
-            player_accel=player_accel-1.5;
+            player_accel=player_accel-2.0;
         };
         if(player_accel!=0.0){
-            player_accel=player_accel+0.02;
+            player_accel=player_accel+0.05;
         };
         if(py_float>168.0){
             py_float=168.0;
@@ -307,13 +444,14 @@ fn main()->void{
         gfx::render();
         gfx::pullControls(controls);
         if(dead_anim==false){
-        for(let i: i16=0; i<150; i=i+1){
-            py_float=py_float-(0.5*((150.0-i as f32)/150.0)+0.1);
+            let ds: i16=10;
+            for(let i: i16=0; i<(150/ds); i=i+1){
+                py_float=py_float-(0.5*(((150.0/(ds as f32))-i as f32)/(150.0/(ds as f32)))+0.1);
              player.y=(py_float as i16);
              gfx::render();
         };
-        for(let i: i16=0; i<250; i=i+1){
-            py_float=py_float+(1.0-((250.0-i as f32)/250.0));
+        for(let i: i16=0; i<(250/ds); i=i+1){
+            py_float=py_float+(1.0-(((250.0/(ds as f32))-i as f32)/(250.0/(ds as f32))));
              player.y=(py_float as i16);
              gfx::render();
         };
@@ -322,6 +460,8 @@ fn main()->void{
         gfx::removeSprite(cloudLayer);
         gfx::removeSprite(cloudLayerTwo);
         gfx::removeSprite(player);
+        gfx::removeSprite(ground);
+        gfx::removeSprite(groundTwo);
         for(let i:i16=0;i<10;i=i+1){
             if(cactus_data[i]!=(None as gfx::Sprite)){
                 gfx::removeSprite(cactus_data[i]);

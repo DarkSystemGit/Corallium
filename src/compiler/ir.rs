@@ -698,6 +698,66 @@ impl IrGen {
                     None
                 } else if BinaryOperator::Assign == op {
                     self.compile_assignment(*left, *right, loc)
+                } else if matches!(op, BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr) {
+                    let left_out = self.compile_expression(*left, loc)?;
+                    if left_out.ty != TypeKind::Bool {
+                        self.emitError(loc, "Logical operators `and`/`or` require bool operands");
+                        return None;
+                    }
+                    let left_val = Value::Register(left_out.clone());
+                    let out = self.alloc_get(TypeKind::Bool)?;
+
+                    match op {
+                        BinaryOperator::LogicalAnd => {
+                            self.emit_instruction(Command::Move(
+                                Value::Immediate(Immediate {
+                                    value: 0.0,
+                                    ty: TypeKind::Bool,
+                                }),
+                                out.clone(),
+                            ));
+                            self.emit_instruction(Command::JumpFalse(Location::None, left_val.clone()));
+                        }
+                        BinaryOperator::LogicalOr => {
+                            self.emit_instruction(Command::Move(
+                                Value::Immediate(Immediate {
+                                    value: 1.0,
+                                    ty: TypeKind::Bool,
+                                }),
+                                out.clone(),
+                            ));
+                            self.emit_instruction(Command::JumpTrue(Location::None, left_val.clone()));
+                        }
+                        _ => unreachable!(),
+                    }
+                    let jump_id = self.get_last_jump_id();
+                    self.deallocate_register(left_out.id);
+
+                    let right_out = self.compile_expression(*right, loc)?;
+                    if right_out.ty != TypeKind::Bool {
+                        self.emitError(loc, "Logical operators `and`/`or` require bool operands");
+                        return None;
+                    }
+                    self.emit_instruction(Command::Move(Value::Register(right_out.clone()), out.clone()));
+                    self.deallocate_register(right_out.id);
+
+                    let end_block = self.new_block();
+                    match op {
+                        BinaryOperator::LogicalAnd => {
+                            self.update_jump(
+                                jump_id,
+                                Command::JumpFalse(Location::Block(end_block), left_val),
+                            );
+                        }
+                        BinaryOperator::LogicalOr => {
+                            self.update_jump(
+                                jump_id,
+                                Command::JumpTrue(Location::Block(end_block), left_val),
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                    Some(out)
                 } else {
                     let outL = self.compile_expression(*left.clone(), loc)?;
                     let outR = self.compile_expression(*right.clone(), loc)?;

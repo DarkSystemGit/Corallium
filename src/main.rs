@@ -93,12 +93,19 @@ fn append_linked_files(args: &[String], disk: &mut Disk) {
             })
             .collect();
         let len = file_data.len();
+        let len_i32 = i32::try_from(len).expect("Linked file too large");
         let name: Vec<i16> = linked_file
             .into_bytes()
             .into_iter()
             .map(|b| b as i16)
             .collect();
-        let data = vec![vec![name.len() as i16], name, vec![len as i16], file_data].concat();
+        let data = vec![
+            vec![name.len() as i16],
+            name,
+            convert_i32_to_i16(len_i32).to_vec(),
+            file_data,
+        ]
+        .concat();
         disk.push(DiskSection {
             section_type: DiskSectionType::Data,
             id: disk.len() as i16,

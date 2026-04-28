@@ -10,17 +10,30 @@ struct FileBuf{
     buf_len: i32,
     buf: &void
 }
-fn get_len(sec: i16, offset: i16)->i32{
+fn get_len(sec: i16, offset: i32)->i32{
     let filenameLen: [i16]=[0];
-    disk::read(sec,offset as i32,1 as i32,filenameLen as &void);
+    disk::read(sec,offset,1 as i32,filenameLen as &void);
     return filenameLen[0] as i32;
+}
+fn get_len32(sec: i16, offset: i32)->i32{
+    let len_words: [i16;2]=[0;2];
+    disk::read(sec,offset,2 as i32,len_words as &void);
+    let lo: i32 = len_words[0] as i32;
+    let hi: i32 = len_words[1] as i32;
+    if (lo < (0 as i32)) {
+        lo = lo + (65536 as i32);
+    };
+    if (hi < (0 as i32)) {
+        hi = hi + (65536 as i32);
+    };
+    return lo + (hi * (65536 as i32));
 }
 fn get_file_section(name: [char])->i16{
     let loc: i16=disk::linkedFileStart();
     let sec_count: i16=disk::sectorCount();
     let nameLen: i32=string::len(name)-(1 as i32);
     for (0;loc<sec_count;loc=loc+1){
-        let filenameLen: i16=get_len(loc,0);
+        let filenameLen: i16=get_len(loc,0 as i32) as i16;
         let filename: &void =mem::alloc(filenameLen as i32);
         disk::read(loc,1 as i32,filenameLen as i32,filename);
         if(mem::compare(name as &void,filename,nameLen)){
@@ -41,7 +54,7 @@ fn list_files()->FileList{
     let sec_count: i16=disk::sectorCount();
     let buf: [[char]]=mem::alloc(((sec_count-file_start)*2) as i32) as [[char]];
     for(let fileSec: i16=file_start; fileSec<sec_count; fileSec=fileSec+1){
-        let filenameLen: i16=get_len(fileSec,0);
+        let filenameLen: i16=get_len(fileSec,0 as i32) as i16;
         let filename: [char] =mem::alloc((filenameLen+1) as i32) as [char];
         disk::read(fileSec,1 as i32,filenameLen as i32,filename as &void);
         filename[filenameLen]=0;
@@ -60,11 +73,11 @@ fn free_file_list(list: FileList)->void{
 }
 fn openFile(name: [char])->FileBuf{
     let fileSec:i16=get_file_section(name);
-    let offset_len: i32=get_len(fileSec,0)+(1 as i32);
-    let len: i32=get_len(fileSec,offset_len as i16);
+    let offset_len: i32=get_len(fileSec,0 as i32)+(1 as i32);
+    let len: i32=get_len32(fileSec,offset_len);
     return FileBuf{
         id: fileSec,
-        offset: offset_len+(1 as i32),
+        offset: offset_len+(2 as i32),
         len: len,
         buf_len: 0 as i32,
         buf_offset:0 as i32,

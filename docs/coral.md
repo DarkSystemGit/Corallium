@@ -77,6 +77,8 @@ for (let i: i16 = 0; i < 4; i = i + 1) {
 
 **Semicolons after block statements are required** (outside of function declarations).
 
+Use `and` / `or` for short-circuit boolean logic. `&` / `|` are non-short-circuit bitwise/logical ops.
+
 ### User-defined types
 
 ```rust
@@ -202,6 +204,10 @@ If the value must outlive the function return, allocate backing storage (for exa
   - `transform: Transform`
   - `transformInfo: [f32]?`
   - `loc: [i32;2]?` (camera center for affine transforms)
+- `struct Bitmap`
+  - `length: i16`
+  - `width: i16`
+  - `data: [i32]`
 
 #### Functions
 
@@ -216,6 +222,24 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array, order [A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger] |
 | `fn setPixel(x: i16, y: i16, color: i32) -> void` | Set a pixel color. |
 | `fn getPixel(x: i16, y: i16) -> i32` | Read a pixel color. |
+| `fn registerBitmap(bitmap: Bitmap) -> void` | Register a bitmap pointer. Registered bitmaps are reloaded and drawn every `render()` (in registration order) with alpha transparency from the low byte (`0xRRGGBBAA`). |
+| `fn removeBitmap(bitmap: Bitmap) -> void` | Unregister a previously registered bitmap pointer. |
+
+`pullControls` keybinds:
+
+| Control | Keyboard key |
+| --- | --- |
+| `A` | `A` |
+| `B` | `S` |
+| `X` | `D` |
+| `Y` | `F` |
+| `Left` | `Left Arrow` |
+| `Right` | `Right Arrow` |
+| `Up` | `Up Arrow` |
+| `Down` | `Down Arrow` |
+| `Start` | `Space` |
+| `LTrigger` | `Q` |
+| `RTrigger` | `E` |
 
 #### How gfx works
 
@@ -223,7 +247,9 @@ Render flow:
 
 1. `registerAtlas` uploads tile data.
 2. `registerLayer` and `registerSprite` register/update objects by `id`; `removeLayer` and `removeSprite` unregister by pointer.
-3. `render()` draws all layers first, then sprites.
+3. `registerBitmap` registers bitmap pointers for per-frame drawing, and `removeBitmap` unregisters them.
+4. `setPixel` queues manual pixel writes.
+5. `render()` draws layers, then sprites, then registered bitmaps, then queued pixel writes.
 
 Layer transform modes:
 

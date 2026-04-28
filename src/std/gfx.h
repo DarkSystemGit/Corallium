@@ -25,6 +25,11 @@ struct Layer {
     transformInfo: [f32]?,
     loc: [i32;2]?
 }
+struct Bitmap {
+    length: i16,
+    width: i16,
+    data: [i32],
+}
 fn registerAtlas(atlas: [i16]) -> void {}
 fn registerSprite(sprite: Sprite) -> void {}
 fn removeSprite(sprite: Sprite) -> void {}
@@ -34,3 +39,5 @@ fn render() -> void {}
 fn pullControls(writeLoc: [bool; 11]) -> void {}
 fn setPixel(x: i16, y: i16, color: i32) -> void {}
 fn getPixel(x: i16, y: i16) -> i32 {}
+fn registerBitmap(bitmap: Bitmap) -> void {}
+fn removeBitmap(bitmap: Bitmap) -> void {}

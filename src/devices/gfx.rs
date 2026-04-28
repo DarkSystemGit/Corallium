@@ -36,6 +36,11 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //  LayerTransform transform
     //  enum(&Matrix,&[Matrix],NULL) transformData
     //}
+    //struct Bitmap{
+    //  i16 length
+    //  i16 width
+    //  *[i32] data
+    //}
     //type NULL:u32=&0
     //type Controls: [bool]=[A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger]
     match command {
@@ -91,6 +96,34 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 println!("IO.gfx.registerSprite %{}", ptr);
             }
         }
+        9 => {
+            //registerBitmap(&Bitmap)
+            //Sets the ptr to a bitmap
+            let ptr = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let gs: &mut GraphicsSystem =
+                (if let RawDevice::Graphics(gs) = &mut machine.devices[device_id].contents {
+                    Some(gs)
+                } else {
+                    None
+                })
+                .expect("Couldn't get graphics system");
+            if !gs.ptrs.bitmaps.contains(&ptr) {
+                gs.ptrs.bitmaps.push(ptr);
+            }
+            if machine.debug {
+                println!("IO.gfx.registerBitmap %{}", ptr);
+            }
+        }
+        10 => {
+            //removeBitmap(&Bitmap)
+            //Stops rendering a bitmap pointer
+            let ptr = unpack_dt(machine.core.stack.pop(&mut machine.core.srp)) as usize;
+            let gs = get_gs(machine, device_id);
+            gs.ptrs.bitmaps.retain(|x| *x != ptr);
+            if machine.debug {
+                println!("IO.gfx.removeBitmap %{}", ptr);
+            }
+        }
         7 => {
             //removeSprite(&Sprite)
             //Stops rendering a sprite pointer and clears cached state for that id
@@ -125,27 +158,27 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
         }
         3 => {
             //render()
-            //render layers & sprites
-            let (atlas_ptr, sprite_ptrs, layer_ptrs, scanlines) = {
+            //render layers, sprites, and bitmaps
+            let (atlas_ptr, sprite_ptrs, layer_ptrs, bitmap_ptrs, scanlines) = {
                 let gs = get_gs(machine, device_id);
                 (
                     gs.ptrs.atlas,
-                    &gs.ptrs.sprites,
-                    &gs.ptrs.layers,
+                    gs.ptrs.sprites.clone(),
+                    gs.ptrs.layers.clone(),
+                    gs.ptrs.bitmaps.clone(),
                     gs.display.height,
                 )
             };
-            //borrow checker pleasing dance
-            let spl = sprite_ptrs.len();
-            let lpl = layer_ptrs.len();
+            get_gs(machine, device_id).clear_bitmaps();
             load_atlas(atlas_ptr, machine, device_id);
-            for spc in 0..spl {
-                let sp = get_gs(machine, device_id).ptrs.sprites[spc];
+            for sp in sprite_ptrs {
                 load_sprite(sp, machine, device_id);
             }
-            for lpc in 0..lpl {
-                let lp = get_gs(machine, device_id).ptrs.layers[lpc];
+            for lp in layer_ptrs {
                 load_layer(lp, machine, device_id, scanlines);
+            }
+            for bp in bitmap_ptrs {
+                load_bitmap(bp, machine, device_id);
             }
             get_gs(machine, device_id).render();
             if !get_gs(machine, device_id).display.is_open() {
@@ -440,6 +473,29 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
     layer.render_type = render_type;
     layer.offset = offset;
 }
+fn load_bitmap(ptr: usize, machine: &mut Machine, device_id: usize) {
+    //[Bitmap layout]
+    // i16 length
+    // i16 width
+    // *[i32] data
+    let bitmap = machine.memory.read_range(ptr..ptr + 4, machine);
+    let length = usize::try_from(bitmap[0]).expect("Bitmap length must be non-negative");
+    let width = usize::try_from(bitmap[1]).expect("Bitmap width must be non-negative");
+    let data_ptr = convert_i16_to_u32(&bitmap[2..4]).expect("Couldn't get bitmap data") as usize;
+    let pixel_count = width
+        .checked_mul(length)
+        .expect("Bitmap dimensions overflow");
+    let data_words = pixel_count
+        .checked_mul(2)
+        .expect("Bitmap data words overflow");
+    let data = machine
+        .memory
+        .read_range(data_ptr..data_ptr + data_words, machine)
+        .chunks(2)
+        .map(|chunk| convert_i16_to_u32(chunk).expect("Couldn't convert i16 to color"))
+        .collect::<Vec<u32>>();
+    get_gs(machine, device_id).add_bitmap(length, width, data);
+}
 #[derive(Debug)]
 struct BGLayer {
     tilemap: TileMap,
@@ -497,6 +553,7 @@ pub type Matrix = [[f32; 2]; 2];
 pub struct GraphicsSystem {
     background_layers: Vec<BGLayer>,
     sprites: (Point, Vec<Option<Sprite>>),
+    bitmaps: Vec<RegisteredBitmap>,
     atlas: Rc<RefCell<TileAtlas>>,
     display: Display,
     controls: Vec<Controls>,
@@ -504,9 +561,16 @@ pub struct GraphicsSystem {
     queuedPixels: Vec<(usize, usize, u32)>,
 }
 #[derive(Debug, Clone)]
+struct RegisteredBitmap {
+    length: usize,
+    width: usize,
+    data: Vec<u32>,
+}
+#[derive(Debug, Clone)]
 struct GraphicsPtrs {
     sprites: Vec<usize>,
     layers: Vec<usize>,
+    bitmaps: Vec<usize>,
     atlas: usize,
 }
 #[derive(Debug, PartialEq)]
@@ -545,6 +609,7 @@ impl GraphicsSystem {
         let mut gs = GraphicsSystem {
             background_layers: vec![],
             sprites: ([0, 0], Vec::new()),
+            bitmaps: vec![],
             atlas: Rc::new(RefCell::new(TileAtlas::new())),
             display: Display::new(
                 resolution[0] as usize,
@@ -557,6 +622,7 @@ impl GraphicsSystem {
             ptrs: GraphicsPtrs {
                 sprites: vec![],
                 layers: vec![],
+                bitmaps: vec![],
                 atlas: 0,
             },
             queuedPixels: vec![],
@@ -597,6 +663,16 @@ impl GraphicsSystem {
     }
     pub fn set_pixel(&mut self, x: usize, y: usize, color: u32) {
         self.queuedPixels.push((x, y, color));
+    }
+    pub fn clear_bitmaps(&mut self) {
+        self.bitmaps.clear();
+    }
+    pub fn add_bitmap(&mut self, length: usize, width: usize, data: Vec<u32>) {
+        self.bitmaps.push(RegisteredBitmap {
+            length,
+            width,
+            data,
+        });
     }
     pub fn get_pixel(&mut self, x: usize, y: usize) -> u32 {
         self.display.buffer[y * self.display.width + x]
@@ -642,6 +718,29 @@ impl GraphicsSystem {
                 );
             }
         }
+        for bitmap in &self.bitmaps {
+            let copy_height = bitmap.length.min(self.display.height);
+            let copy_width = bitmap.width.min(self.display.width);
+            for y in 0..copy_height {
+                let src_row_start = y * bitmap.width;
+                let dst_row_start = y * self.display.width;
+                for x in 0..copy_width {
+                    let bitmap_pixel = bitmap.data[src_row_start + x];
+                    let alpha = bitmap_pixel & 0xff;
+                    if alpha == 0 {
+                        continue;
+                    }
+                    let dst_idx = dst_row_start + x;
+                    if alpha == 255 {
+                        self.display.buffer[dst_idx] = bitmap_pixel;
+                        continue;
+                    }
+                    let base_pixel = self.display.buffer[dst_idx];
+                    self.display.buffer[dst_idx] =
+                        blend_over(base_pixel, bitmap_pixel, alpha as u32);
+                }
+            }
+        }
         for pix in self.queuedPixels.drain(..) {
             self.display.buffer[pix.1 * self.display.width + pix.0] = pix.2;
         }
@@ -656,6 +755,17 @@ impl GraphicsSystem {
         }
     }
 }
+
+fn blend_over(base: u32, top: u32, top_alpha: u32) -> u32 {
+    (0..4).fold(0, |acc, i| {
+        let shift = i * 8;
+        let base_ch = (base >> shift) & 0xff;
+        let top_ch = (top >> shift) & 0xff;
+        let out_ch = (base_ch * (255 - top_alpha) + top_ch * top_alpha) / 255;
+        acc | (out_ch << shift)
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct Sprite {
     pub tilemap: TileMap,

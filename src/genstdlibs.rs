@@ -145,6 +145,32 @@ fn gen_gfx() -> io::Result<()> {
         ]],
     ));
 
+    #[rustfmt::skip]
+    gfx.add_fn(Fn::new_with_blocks(
+        "registerBitmap".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID),         Bytecode::Int(9),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    gfx.add_fn(Fn::new_with_blocks(
+        "removeBitmap".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID),         Bytecode::Int(10),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
     let out = Path::new("src/std/gfx.bin");
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent)?;

@@ -15,31 +15,31 @@ This repository contains a Coral Compiler, an executable/linking layer, and the 
 ### Run a Coral program
 
 ```bash
-cargo run -- --run --file test/importTest.coral
+cargo run -- run --file test/importTest.coral
 ```
 
 Enable the runtime debugger:
 
 ```bash
-cargo run -- --run --file test/importTest.coral --debug
+cargo run -- run --file test/importTest.coral --debug
 ```
 
-Compile to a serialized disk image (`.cart`):
+Compile to a cartridge (`.cart`):
 
 ```bash
-cargo run -- --compile --file test/importTest.coral
+cargo run -- compile --file test/importTest.coral
 ```
 
-Link one or more extra files or directories into the disk image:
+Link one or more extra files or directories into the cartridge:
 
 ```bash
-cargo run -- --compile --file test/importTest.coral --link path/to/file1 path/to/dir
+cargo run -- compile --file test/importTest.coral --link path/to/file1 path/to/dir
 ```
 
-Run from a serialized disk image:
+Run from a cartridge:
 
 ```bash
-cargo run -- --bytecode --file test/importTest.cart
+cargo run -- bytecode --file test/importTest.cart
 ```
 
 Show CLI help:
@@ -86,7 +86,7 @@ Device I/O is invoked as `IO(device_id, command_id)`, with command arguments pas
 | `0` | Disk | `0=read`, `1=write`, `2=loadSectors` |
 | `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound` |
 | `2` | Clock | `0=read` |
-| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer` |
+| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer`, `9=registerBitmap`, `10=removeBitmap` |
 | `4` | Serial | `0=write (null-terminated string ptr)`, `1=writeNum (i32)` |
 
 Graphics control mapping:
@@ -110,3 +110,12 @@ Graphics control mapping:
 - `src/vm.rs` - VM execution engine, stack/memory model, debug console
 - `src/devices/` - disk, audio, clock, graphics, and serial drivers
 - `test/` - small Coral examples & tests
+## Demos
+
+You can run a demo game made for corralium in `demos/dinoGame/main.cart`. You can run: 
+```bash
+cargo run --release -- bytecode --file demos/dinoGame/main.cart
+```
+
+## Credits
+Credit to Subspace Audio for the start up sound (sourced from this pack: [512 8-bit sounds](https://opengameart.org/content/512-sound-effects-8-bit-style)).

@@ -21,10 +21,10 @@ echo Copying binary...
 copy "target\release\Corallium.exe" "%INSTALL_DIR%\corallium.exe"
 
 echo Copying standard library...
-if exist "%INSTALL_DIR%\src\std" (
-    rmdir /s /q "%INSTALL_DIR%\src\std"
+if exist "%INSTALL_DIR%\std" (
+    rmdir /s /q "%INSTALL_DIR%\std"
 )
-xcopy "src\std" "%INSTALL_DIR%\src\std" /E /I /Y
+xcopy "src\std" "%INSTALL_DIR%\std" /E /I /Y
 
 echo.
 echo Installation complete!

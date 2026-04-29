@@ -22,18 +22,17 @@ case "$OS_TYPE" in
         echo "Installing for Linux..."
         sudo mkdir -p /opt/Corallium
         sudo cp "$BINARY" /bin/corallium
-        sudo mkdir -p /opt/Corallium/src
-        sudo cp -r ./src/std /opt/Corallium/src
-        echo "Installed to /bin/corallium and /opt/Corallium/src/std"
+        sudo cp -r ./src/std /opt/Corallium/std
+        echo "Installed to /bin/corallium and /opt/Corallium/std"
         ;;
     Darwin)
         echo "Installing for macOS..."
-        mkdir -p /usr/local/opt/Corallium/src
+        mkdir -p /usr/local/opt/Corallium/
         mkdir -p /usr/local/bin
         cp "$BINARY" /usr/local/bin/corallium
         chmod +x /usr/local/bin/corallium
-        cp -r ./src/std /usr/local/opt/Corallium/src
-        echo "Installed to /usr/local/bin/corallium and /usr/local/opt/Corallium/src/std"
+        cp -r ./src/std /usr/local/opt/Corallium/std
+        echo "Installed to /usr/local/bin/corallium and /usr/local/opt/Corallium/std"
         echo ""
         echo "If /usr/local/bin is not in your PATH, add this to your shell profile:"
         echo "  export PATH=\"/usr/local/bin:\$PATH\""

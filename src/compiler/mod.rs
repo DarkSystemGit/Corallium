@@ -25,6 +25,7 @@ fn collect_import_libs(
     active_sources: &mut HashSet<String>,
     source_cache: &mut HashMap<String, Library>,
     header_cache: &mut HashMap<String, Library>,
+    stdloc: String,
 ) -> Option<()> {
     for import in imports {
         match Path::new(import).extension()?.to_str()? == "h" {
@@ -52,7 +53,7 @@ fn collect_import_libs(
                 }
                 let file =
                     fs::read_to_string(import).expect(&format!("Failed to read path {}", import));
-                let mut back = Backend::new(&file, import);
+                let mut back = Backend::new(&file, import, stdloc.clone());
                 back.select_instructions();
                 let mut nested_libs = vec![];
                 collect_import_libs(
@@ -61,6 +62,7 @@ fn collect_import_libs(
                     active_sources,
                     source_cache,
                     header_cache,
+                    stdloc.clone(),
                 )?;
 
                 let mut lib = Library::new(Path::new(import).file_stem()?.to_str()?.to_string());
@@ -79,8 +81,8 @@ fn collect_import_libs(
     Some(())
 }
 
-pub fn compile(name: &str, code: &str) -> (Executable, Vec<String>) {
-    let mut back = Backend::new(code, name);
+pub fn compile(name: &str, code: &str, stdloc: String) -> (Executable, Vec<String>) {
+    let mut back = Backend::new(code, name, stdloc);
     back.select_instructions();
     let mut exe = Executable::new();
     back.emit_bytecode().into_iter().for_each(|x| {
@@ -88,9 +90,9 @@ pub fn compile(name: &str, code: &str) -> (Executable, Vec<String>) {
     });
     (exe, back.logs)
 }
-pub fn compile_file(path: &str) -> Option<Executable> {
+pub fn compile_file(path: &str, stdloc: String) -> Option<Executable> {
     let file = fs::read_to_string(path).expect(&format!("Failed to read path {}", path));
-    let mut back = Backend::new(&file, path);
+    let mut back = Backend::new(&file, path, stdloc.clone());
     back.select_instructions();
     let mut exe = Executable::new();
     back.emit_bytecode().into_iter().for_each(|x| {
@@ -107,6 +109,7 @@ pub fn compile_file(path: &str) -> Option<Executable> {
         &mut active_sources,
         &mut source_cache,
         &mut header_cache,
+        stdloc,
     )?;
     for i in imports {
         i.link(&mut exe);

@@ -43,7 +43,7 @@ pub fn run_cases() {
             }
             TestType::Internal(ref func) => func(&mut machine),
             TestType::Compiler(code) => {
-                let (exe, logs) = compile(&case.name, code.as_str());
+                let (exe, logs) = compile(&case.name, code.as_str(), "./src/std".to_string());
                 let mut disk: Disk = vec![DiskSection {
                     section_type: DiskSectionType::Entrypoint,
                     id: 0,

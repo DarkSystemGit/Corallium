@@ -16,6 +16,7 @@ pub struct Parser {
     file_name: String,
     type_table: TypeTable,
     quiet: bool,
+    stdloc: String,
 }
 #[derive(Debug, Clone)]
 struct TypeTable {
@@ -250,7 +251,7 @@ pub struct UnionDeclaration {
     pub variants: IndexMap<String, TypeKind>,
 }
 impl Parser {
-    pub fn new(input: String, file_name: String, quiet: bool) -> Self {
+    pub fn new(input: String, file_name: String, quiet: bool, stdloc: String) -> Self {
         let mut lexer = Lexer::new(input.clone());
         let tokens = lexer.lex();
         Parser {
@@ -260,6 +261,7 @@ impl Parser {
             file_name,
             type_table: TypeTable::new(),
             quiet,
+            stdloc,
         }
     }
     pub fn parse(&mut self) -> (Vec<Statement>, Header) {
@@ -600,49 +602,83 @@ impl Parser {
         let src = &self.src.clone();
         let loc = self.next().loc.get_src_loc(src);
         let file_name = self.file_name.clone();
-        if let TokenKind::String(rpath) = &self.next().kind {
-            let path = Path::new(&file_name)
+
+        let path = if let TokenKind::String(rpath) = &self.peek().kind {
+            let rpath = rpath.clone();
+            self.next();
+            Path::new(&file_name)
                 .parent()
                 .unwrap_or(Path::new(""))
                 .join(rpath)
                 .to_str()
                 .unwrap()
-                .to_string();
-            self.matchToken(TokenKind::Semicolon)?;
-            let file = std::fs::read_to_string(path.clone())
-                .expect(&format!("Invalid import path: {}", &path));
-            let import_module = Path::new(&path)
-                .file_stem()
-                .expect(&format!("Invalid import path: {}", &path))
-                .to_str()
-                .unwrap()
-                .to_string();
-            let is_header = Path::new(&path).extension()?.to_str()? == "h";
-            let mut parser = Parser::new(file, path.clone(), !is_header);
-            let header = parser.parse().1;
-            for i in header.symbols.iter() {
-                match &i.body {
-                    Definition::User(ty) => {
-                        self.type_table.insert(
-                            format!("{}::{}", import_module, i.name.clone()),
-                            match ty {
-                                super::ir::UserType::Enum(_) => UserType::Enum,
-                                super::ir::UserType::Struct(_) => UserType::Struct,
-                                super::ir::UserType::Union(_) => UserType::Union,
-                            },
-                        );
-                    }
-                    _ => {}
+                .to_string()
+        } else if matches!(&self.peek().kind, TokenKind::Operator(OperatorKind::Lt)) {
+            self.next();
+            if let TokenKind::Identifier(name) = &self.peek().kind {
+                let name = name.clone();
+                self.next();
+                if !matches!(&self.peek().kind, TokenKind::Operator(OperatorKind::Gt)) {
+                    self.emitError(&format!("Expected '>' after stdlib import name"));
+                    return None;
                 }
+                self.next();
+                self.resolveStdlibImport(&name)?
+            } else {
+                self.emitError(&format!("Expected identifier after '<' in import"));
+                return None;
             }
-            Some(Statement {
-                kind: StatementKind::Import(ImportDeclaration { path, header }),
-                loc,
-            })
         } else {
-            self.emitError(&format!("Expected string literal for import path"));
+            self.emitError(&format!("Expected string literal or <stdlib> import"));
             return None;
+        };
+
+        self.matchToken(TokenKind::Semicolon)?;
+        let file = std::fs::read_to_string(path.clone())
+            .expect(&format!("Invalid import path: {}", &path));
+        let import_module = Path::new(&path)
+            .file_stem()
+            .expect(&format!("Invalid import path: {}", &path))
+            .to_str()
+            .unwrap()
+            .to_string();
+        let is_header = Path::new(&path).extension()?.to_str()? == "h";
+        let mut parser = Parser::new(file, path.clone(), !is_header, self.stdloc.clone());
+        let header = parser.parse().1;
+        for i in header.symbols.iter() {
+            match &i.body {
+                Definition::User(ty) => {
+                    self.type_table.insert(
+                        format!("{}::{}", import_module, i.name.clone()),
+                        match ty {
+                            super::ir::UserType::Enum(_) => UserType::Enum,
+                            super::ir::UserType::Struct(_) => UserType::Struct,
+                            super::ir::UserType::Union(_) => UserType::Union,
+                        },
+                    );
+                }
+                _ => {}
+            }
         }
+        Some(Statement {
+            kind: StatementKind::Import(ImportDeclaration { path, header }),
+            loc,
+        })
+    }
+
+    fn resolveStdlibImport(&self, name: &str) -> Option<String> {
+        let stdlib_base = Path::new(self.stdloc.as_str());
+
+        for ext in &["coral", "h"] {
+            let full_path = stdlib_base.join(format!("{}.{}", name, ext));
+            //dbg!(stdlib_base.join(format!("{}.{}", name, ext)));
+            if full_path.exists() {
+                return Some(full_path.to_str()?.to_string());
+            }
+        }
+
+        self.emitError(&format!("stdlib import '{}' not found", name));
+        None
     }
     fn parseWhileStatement(&mut self) -> Option<Statement> {
         let src = &self.src.clone();

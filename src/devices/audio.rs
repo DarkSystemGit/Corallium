@@ -103,11 +103,22 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     unpack_float(&[*x, rdata[i + 1]]).expect("Couldn't parse sample float")
                 })
                 .collect();
-            //println!("{:?}", rdata);
             if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
                 audio.update_channel(channel, ChannelUpdate::WaveSample(data));
                 if machine.debug {
                     println!("IO.audio.loadSound {} %[{}..{}]", channel, ptr, ptr + len);
+                }
+            }
+        }
+        7 => {
+            //setLoop(channel, enabled)
+            if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                let args = pop_stack(&mut machine.core, 2);
+                let channel = args[0] as usize;
+                let enabled = args[1] != 0.0;
+                audio.update_channel(channel, ChannelUpdate::Loop(enabled));
+                if machine.debug {
+                    println!("IO.audio.setLoop {} {}", channel, enabled);
                 }
             }
         }
@@ -141,8 +152,8 @@ impl AudioDevice {
                 gen_uninitialized_channels(gen_triangle_wave as WaveGenerator, 2, 10.0),
                 gen_uninitialized_channels(gen_sawtooth_wave as WaveGenerator, 2, 10.0),
                 vec![
-                    Channel::new_with_sample(vec![0.0], 0.1, [1.0, 1.0]),
-                    Channel::new_with_sample(vec![0.0], 0.1, [1.0, 1.0]),
+                    Channel::new_with_sample(vec![0.0], 0.1, [1.0, 1.0], false),
+                    Channel::new_with_sample(vec![0.0], 0.1, [1.0, 1.0], false),
                 ],
             ])),
             sample_rate: 32000,
@@ -193,7 +204,7 @@ impl AudioDevice {
 fn gen_uninitialized_channels(wave: WaveGenerator, count: i32, ttl: f32) -> Vec<Channel> {
     let mut r = vec![];
     for _i in 0..count {
-        r.push(Channel::new(0.0, 1.0 / ttl, [1.0, 1.0], wave));
+        r.push(Channel::new(0.0, 1.0 / ttl, [1.0, 1.0], wave, false));
     }
     r
 }
@@ -241,6 +252,7 @@ fn modify_channel_collection_item(id: usize, channels: &ChannelCollection, updat
                         volume / 10.0,
                         uc.pan,
                         uc.wave.unwrap(),
+                        uc.loop_sample,
                     )));
                 }
                 ChannelUpdate::Pan(pan) => {
@@ -249,6 +261,7 @@ fn modify_channel_collection_item(id: usize, channels: &ChannelCollection, updat
                         uc.volume,
                         pan,
                         uc.wave.unwrap(),
+                        uc.loop_sample,
                     )));
                 }
                 ChannelUpdate::Frequency(freq) => {
@@ -257,6 +270,16 @@ fn modify_channel_collection_item(id: usize, channels: &ChannelCollection, updat
                         uc.volume,
                         uc.pan,
                         uc.wave.unwrap(),
+                        uc.loop_sample,
+                    )));
+                }
+                ChannelUpdate::Loop(enabled) => {
+                    channel.store(Arc::new(Channel::new(
+                        uc.freq.unwrap(),
+                        uc.volume,
+                        uc.pan,
+                        uc.wave.unwrap(),
+                        enabled,
                     )));
                 }
                 _ => {}
@@ -268,6 +291,7 @@ fn modify_channel_collection_item(id: usize, channels: &ChannelCollection, updat
                         uc.wave_sample.clone().unwrap(),
                         volume / 10.0,
                         uc.pan,
+                        uc.loop_sample,
                     )));
                 }
                 ChannelUpdate::Pan(pan) => {
@@ -275,11 +299,23 @@ fn modify_channel_collection_item(id: usize, channels: &ChannelCollection, updat
                         uc.wave_sample.clone().unwrap(),
                         uc.volume,
                         pan,
+                        uc.loop_sample,
                     )));
                 }
                 ChannelUpdate::WaveSample(sample) => {
                     channel.store(Arc::new(Channel::new_with_sample(
-                        sample, uc.volume, uc.pan,
+                        sample,
+                        uc.volume,
+                        uc.pan,
+                        uc.loop_sample,
+                    )));
+                }
+                ChannelUpdate::Loop(enabled) => {
+                    channel.store(Arc::new(Channel::new_with_sample(
+                        uc.wave_sample.clone().unwrap(),
+                        uc.volume,
+                        uc.pan,
+                        enabled,
                     )));
                 }
                 _ => {}
@@ -292,6 +328,7 @@ pub enum ChannelUpdate {
     Pan([f32; 2]),
     Frequency(f32),
     WaveSample(Vec<f32>),
+    Loop(bool),
 }
 type WaveGenerator = fn(f32, f32) -> f32;
 fn gen_wave(
@@ -327,8 +364,12 @@ fn gen_wave(
                     channel.play(channel_clocks[i])
                 } else if let Some(sample) = &channel.wave_sample {
                     let val = channel.play(channel_clocks[i]);
-                    if !sample.is_empty() && channel_clocks[i] < sample.len() as f32 {
-                        channel_clocks[i] += 1.0;
+                    if !sample.is_empty() {
+                        if channel.loop_sample {
+                            channel_clocks[i] = (channel_clocks[i] + 1.0) % sample.len() as f32;
+                        } else if channel_clocks[i] < sample.len() as f32 {
+                            channel_clocks[i] += 1.0;
+                        }
                     }
                     val
                 } else {
@@ -370,25 +411,28 @@ struct Channel {
     wave: Option<WaveGenerator>,
     pan: [f32; 2],
     wave_sample: Option<Vec<f32>>,
+    loop_sample: bool,
 }
 
 impl Channel {
-    fn new(freq: f32, volume: f32, pan: [f32; 2], wave: WaveGenerator) -> Self {
+    fn new(freq: f32, volume: f32, pan: [f32; 2], wave: WaveGenerator, loop_sample: bool) -> Self {
         Channel {
             freq: Some(freq),
             volume,
             wave: Some(wave),
             pan,
             wave_sample: None,
+            loop_sample,
         }
     }
-    fn new_with_sample(sample: Vec<f32>, volume: f32, pan: [f32; 2]) -> Self {
+    fn new_with_sample(sample: Vec<f32>, volume: f32, pan: [f32; 2], loop_sample: bool) -> Self {
         Channel {
             freq: None,
             volume,
             wave: None,
             pan,
             wave_sample: Some(sample),
+            loop_sample,
         }
     }
     fn play(&self, phase: f32) -> f32 {
@@ -396,7 +440,11 @@ impl Channel {
             wave_func(phase, self.volume)
         } else if let Some(sample) = &self.wave_sample {
             // phase is the index for raw samples
-            if phase < (sample.len() as f32) {
+            if sample.is_empty() {
+                0.0
+            } else if self.loop_sample {
+                sample[phase as usize % sample.len()] * self.volume
+            } else if phase < (sample.len() as f32) {
                 sample[phase as usize] * self.volume
             } else {
                 0.0

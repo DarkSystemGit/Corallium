@@ -1,0 +1,14 @@
+import "mem.coral";
+fn len(str: [char])->i32{
+    let c:i32=0;
+    while((str[c] as i16)!=0){c=c+(1 as i32);};
+    return c;
+}
+fn append(str1: [char], str2: [char])->[char]{
+    let ttl: i32=len(str1)+len(str2)+(1 as i32);
+    let alloc: [char]=mem::alloc(ttl) as [char];
+    mem::copy(str1 as &void,alloc as &void,len(str1),0 as i32);
+    mem::copy(str2 as &void,alloc as &void,len(str2),len(str1));
+    alloc[ttl-(1 as i32)]=0 as char;
+    return alloc;
+}

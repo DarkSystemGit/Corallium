@@ -99,6 +99,16 @@ fn gen_gfx() -> io::Result<()> {
 
     #[rustfmt::skip]
     gfx.add_fn(Fn::new_with_blocks(
+        "deltaTime".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(GFX_DEVICE_ID), Bytecode::Int(11),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),              Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    gfx.add_fn(Fn::new_with_blocks(
         "pullControls".to_string(),
         vec![2],
         vec![vec![
@@ -280,6 +290,22 @@ fn gen_audio() -> io::Result<()> {
             Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(6),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "setLoop".to_string(),
+        vec![1, 1],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(7),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));

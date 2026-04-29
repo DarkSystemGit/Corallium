@@ -136,8 +136,8 @@ pub struct IrGen {
     defer_stack: Vec<Vec<Statement>>,
 }
 impl IrGen {
-    pub fn new(filename: &str, input: String) -> Self {
-        let mut parser = Parser::new(input, filename.to_string(), false);
+    pub fn new(filename: &str, input: String, stdloc: String) -> Self {
+        let mut parser = Parser::new(input, filename.to_string(), false, stdloc);
         let parse = parser.parse();
         IrGen {
             input: parse.0,
@@ -716,7 +716,10 @@ impl IrGen {
                                 }),
                                 out.clone(),
                             ));
-                            self.emit_instruction(Command::JumpFalse(Location::None, left_val.clone()));
+                            self.emit_instruction(Command::JumpFalse(
+                                Location::None,
+                                left_val.clone(),
+                            ));
                         }
                         BinaryOperator::LogicalOr => {
                             self.emit_instruction(Command::Move(
@@ -726,7 +729,10 @@ impl IrGen {
                                 }),
                                 out.clone(),
                             ));
-                            self.emit_instruction(Command::JumpTrue(Location::None, left_val.clone()));
+                            self.emit_instruction(Command::JumpTrue(
+                                Location::None,
+                                left_val.clone(),
+                            ));
                         }
                         _ => unreachable!(),
                     }
@@ -738,7 +744,10 @@ impl IrGen {
                         self.emitError(loc, "Logical operators `and`/`or` require bool operands");
                         return None;
                     }
-                    self.emit_instruction(Command::Move(Value::Register(right_out.clone()), out.clone()));
+                    self.emit_instruction(Command::Move(
+                        Value::Register(right_out.clone()),
+                        out.clone(),
+                    ));
                     self.deallocate_register(right_out.id);
 
                     let end_block = self.new_block();

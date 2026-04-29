@@ -2,24 +2,106 @@
 
 Coral is a C-like language with Rust-inspired syntax for the Corallium VM.
 
+## Installation and setup
+
+### Requirements
+
+- **Rust** (with Cargo) - The Coral compiler and VM are written in Rust. Install from [rustup.rs](https://rustup.rs/)
+- **Desktop environment** - The VM opens a graphics window and initializes audio output, so a display server is required
+- **X11 or XWayland** - On Linux, X11 or XWayland support is needed; native Wayland is not yet supported due to lack of window decorations
+
+### Build and install
+
+Clone the repository:
+
+```bash
+git clone https://github.com/DarkSystemGit/micro-16.git
+cd micro-16
+```
+
+Run the appropriate install script for your OS:
+
+**Linux and macOS:**
+```bash
+./install.sh
+```
+
+This script:
+- Builds the project in release mode
+- Detects your OS (Linux or macOS)
+- Installs the `corallium` binary and standard library to the appropriate location:
+  - **Linux**: Binary to `/bin/corallium`, stdlib to `/opt/Corallium/src/std`
+  - **macOS**: Binary to `/usr/local/bin/corallium`, stdlib to `/usr/local/opt/Corallium/src/std`
+
+**Windows:**
+```cmd
+install.bat
+```
+
+This script:
+- Builds the project in release mode
+- Installs the `corallium` binary and standard library to `C:\Program Files\Corallium`
+- Displays instructions for adding the directory to your PATH
+
+After installation, you can run Coral programs from anywhere:
+
+```bash
+corallium run --file myprogram.coral
+```
+
+### Manual build without installation
+
+If you prefer not to use the install script, you can build and run directly:
+
+```bash
+cargo build --release
+./target/release/Corallium run --file test/importTest.coral
+```
+
+Or via Cargo (slower, but no build step needed):
+
+```bash
+cargo run --release -- run --file test/importTest.coral
+```
+
+### Custom stdlib location
+
+If the stdlib is not in the default location, use the `--std` flag to specify its path:
+
+```bash
+corallium run --file myprogram.coral --std /path/to/stdlib
+```
+
 ## Quick start
 
-Run a Coral file:
+Run a Coral file directly:
 
 ```bash
-cargo run -- --run --file test/importTest.coral
+cargo run -- run --file test/importTest.coral
 ```
 
-Compile a Coral file to `.cart`:
+Compile a Coral file to a `.cart` cartridge:
 
 ```bash
-cargo run -- --compile --file test/importTest.coral
+cargo run -- compile --file test/importTest.coral
 ```
 
-Run a `.cart`:
+Run a compiled cartridge:
 
 ```bash
-cargo run -- --bytecode --file test/importTest.cart
+cargo run -- bytecode --file test/importTest.cart
+```
+
+Link extra data files or directories into a cartridge:
+
+```bash
+cargo run -- compile --file test/importTest.coral --link path/to/file path/to/dir
+```
+
+Enable debug output during execution:
+
+```bash
+cargo run -- run --file test/importTest.coral --debug
 ```
 
 ## Basic syntax
@@ -79,6 +161,46 @@ for (let i: i16 = 0; i < 4; i = i + 1) {
 
 Use `and` / `or` for short-circuit boolean logic. `&` / `|` are non-short-circuit bitwise/logical ops.
 
+### Comments
+
+```rust
+// Single-line comment
+let x: i16 = 5;  // inline comment
+
+/* Multi-line comment
+   can span multiple
+   lines */
+```
+
+### Type casting
+
+Type casts use the `as` keyword to convert between types:
+
+```rust
+let a: i16 = 10;
+let b: i32 = a as i32;  // Convert i16 to i32
+let c: i16 = b as i16;  // Convert i32 back to i16
+let f: f32 = 3.14;
+let i: i16 = f as i16;  // Convert float to int (truncates)
+```
+
+Casts are explicit and required; implicit conversions are not permitted.
+
+### Pointers
+
+Pointers are created with the `&` operator and dereference through function calls or field access:
+
+```rust
+let value: i32 = 42;
+let ptr: &i32 = &value;  // Address of value
+
+// Pointers are commonly used for:
+mem::free(ptr);           // Freeing allocated memory
+disk::read(section, addr, len, ptr as &void);  // Passing to device functions
+```
+
+Pointer-backed types (arrays, structs, unions) are managed automatically during pointer operations.
+
 ### User-defined types
 
 ```rust
@@ -118,7 +240,23 @@ fn unwrap_or_zero(v: MaybeInt) -> i32 {
 }
 ```
 
-## Type behavior
+## Type system
+
+### Data types
+
+Coral supports the following primitive types:
+
+| Type | Range | Notes |
+| --- | --- | --- |
+| `i16` | -32,768 to 32,767 | 16-bit signed integer |
+| `i32` | -2,147,483,648 to 2,147,483,647 | 32-bit signed integer |
+| `f32` | IEEE 754 single-precision | 32-bit floating-point |
+| `bool` | `true` or `false` | Boolean value |
+| `char` | UTF-8 code point | Single character |
+
+Aggregate types and arrays are discussed below.
+
+### Type behavior
 
 Coral syntax is straightforward, but aggregate types are pointer-backed in compiler lowering.
 
@@ -169,6 +307,72 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn frequency(channel: i16, newFrequency: f32) -> void` | Set playback frequency for a channel. |
 | `fn masterVolume(newVolume: i32) -> void` | Set master output volume. |
 | `fn loadSound(channel: i16, sample: [f32], len: i32) -> void` | Load sample data into a channel. |
+| `fn setLoop(channel: i16, enabled: bool) -> void` | Enable or disable looping for a sample channel. |
+
+#### How audio works
+
+The audio system plays sounds through **channels**, each independently controlled with their own playback parameters. Audio is produced at a 32 kHz sample rate, output as stereo (left and right speakers).
+
+**Channel types:**
+
+The system provides 10 channels with different capabilities:
+- 4 **square wave** channels: Generate procedural square wave tones (useful for synthesized bleeps/bloops).
+- 2 **triangle wave** channels: Generate procedural triangle wave tones (smoother than square).
+- 2 **sawtooth wave** channels: Generate procedural sawtooth wave tones (bright, harsh tone).
+- 2 **sample playback** channels: Play arbitrary sound sample data (for music, voice, sound effects).
+
+**Sound data and samples:**
+
+- Sound is represented as a stream of floating-point numbers (`[f32]`), each between `-1.0` and `1.0`.
+- Each number is one **sample**—a snapshot of the audio waveform at one point in time.
+- At 32 kHz, 32,000 samples play back in one second.
+- Mono audio uses a single sample stream; stereo audio mixes left and right channels together.
+
+**Playing synthesized waves:**
+
+Procedural channels (square, triangle, sawtooth) generate tones based on frequency:
+- `frequency(channel, freq)` sets the tone pitch.
+- The waveform shape is determined by the channel type (square produces a harsh tone, triangle is smoother, sawtooth is bright).
+- The wave continuously loops; use `pause()` and `unpause()` to stop/resume all channels.
+
+**Playing sample data:**
+
+Sample channels play loaded sound data:
+- `loadSound(channel, sample, len)` loads a `[f32]` array into a channel and immediately begins playback.
+- Playback starts from index 0 and advances one sample per output sample.
+- `setLoop(channel, enabled)` controls whether the sample loops back to index 0 after reaching the end.
+- `frequency(channel, speed)` adjusts playback speed (e.g., `2.0` plays at 2× speed, `0.5` at half speed).
+
+**Volume and mixing:**
+
+- Each channel has independent volume control.
+- `volume(channel, level)` sets a channel's amplitude (range typically `0.0` to `1.0`).
+- `pan(channel, left, right)` routes the channel to speakers: `pan(0, 1.0, 0.0)` sends fully left, `pan(0, 0.5, 0.5)` sends to both equally.
+- `masterVolume(level)` scales the entire output (e.g., `100` is full volume).
+- All 10 channels mix together for final output, clamped to prevent clipping.
+
+Example: Play a looping sound sample with manual controls
+
+```rust
+import <audio>;
+
+fn main() -> void {
+    let my_sound: [f32] = [/* your sample data here */];
+    
+    // Load sound into sample channel 0
+    audio::loadSound(0, my_sound, 512);
+    
+    // Set volume and stereo pan
+    audio::volume(0, 0.8);
+    audio::pan(0, 0.5, 0.5);       // center the sound
+    
+    // Enable looping and play at normal speed
+    audio::setLoop(0, true);
+    audio::frequency(0, 1.0);
+    
+    return;
+}
+```
 
 ### `disk` (`src/std/disk.h`)
 
@@ -178,6 +382,7 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn write(section: i16, addr: i32, len: i32, buffer: &void) -> void` | Write `len` values from `buffer` into a disk section starting at `addr`. |
 | `fn loadSectors(start: i16, count: i16, dest: i32) -> void` | Bulk-load sectors into memory. |
 | `fn linkedFileStart() -> i16` | Get the first linked data section after executable data. |
+| `fn sectorCount() -> i16` | Get the total number of sectors on disk. |
 
 ### `gfx` (`src/std/gfx.h`)
 
@@ -219,6 +424,7 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn registerLayer(layer: Layer) -> void` | Register/update a layer. |
 | `fn removeLayer(layer: Layer) -> void` | Unregister a layer using the same layer pointer used for registration. |
 | `fn render() -> void` | Render the current frame. |
+| `fn deltaTime() -> i32` | Milliseconds elapsed since the previous `render()` call. |
 | `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array, order [A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger] |
 | `fn setPixel(x: i16, y: i16, color: i32) -> void` | Set a pixel color. |
 | `fn getPixel(x: i16, y: i16) -> i32` | Read a pixel color. |
@@ -340,6 +546,106 @@ Notes:
 | --- | --- |
 | `fn len(str: [char]) -> i32` | Return string length (up to null terminator). |
 | `fn append(str1: [char], str2: [char]) -> [char]` | Allocate and return concatenated string. |
+
+### `fs` (`src/std/fs.coral`)
+
+High-level file system abstraction built on `disk`. Provides file I/O through `FileBuf` handles.
+
+#### Types
+
+- `struct FileBuf`
+  - `id: i16` - Internal sector ID
+  - `offset: i32` - Current file offset
+  - `len: i32` - Total file size in bytes
+  - `buf_offset: i32` - Current buffer memory offset
+  - `buf_len: i32` - Size of loaded buffer
+  - `buf: &void` - Pointer to loaded buffer data
+
+- `struct FileList`
+  - `buf: [[char]]` - Array of filenames
+  - `len: i16` - Number of files
+
+#### Functions
+
+| Function | Description |
+| --- | --- |
+| `fn openFile(name: [char]) -> FileBuf` | Open a file by name and return a file handle. |
+| `fn readFile(buf: FileBuf, offset: i32, len: i32?) -> void` | Read from a file at offset (optional len, defaults to full file). |
+| `fn writeFile(buf: FileBuf) -> void` | Write the buffer contents back to the file. |
+| `fn closeFile(buf: FileBuf) -> void` | Close a file handle and free its buffer. |
+| `fn list_files() -> FileList` | List all files on disk. |
+| `fn free_file_list(list: FileList) -> void` | Free a file list. |
+
+### `conv` (`src/std/conv.coral`)
+
+Low-level bit and byte manipulation utilities for converting between multi-word representations.
+
+| Function | Description |
+| --- | --- |
+| `fn to_u16(word: i16) -> i32` | Convert a signed i16 to an unsigned 32-bit representation. |
+| `fn i32_from_i16_parts(low: i16, high: i16) -> i32` | Combine two i16s (low and high) into one i32. |
+| `fn i16_part_from_i32(value: i32, part: i16) -> i16` | Extract low (part=0) or high (part=1) i16 from an i32. |
+| `fn set_i16_part_in_i32(value: i32, part: i16, part_value: i16) -> i32` | Replace low or high i16 in an i32. |
+| `fn get_i8_from_i16(word: i16, byte_index: i32) -> i16` | Extract a byte (byte_index 0 or 1) from an i16. |
+| `fn set_i8_in_i16(word: i16, byte_index: i32, value: i16) -> i16` | Set a byte in an i16. |
+
+## Execution modes
+
+### `run` - Direct execution
+
+Compiles and runs a Coral file immediately:
+
+```bash
+cargo run -- run --file myprogram.coral
+```
+
+Useful for development and testing. Output appears in the console and graphics/audio play in real-time.
+
+### `compile` - Build to cartridge
+
+Compiles to a `.cart` (cartridge) file, which is a portable binary containing compiled bytecode and linked data:
+
+```bash
+cargo run -- compile --file myprogram.coral
+```
+
+The `.cart` format is optimized for distribution and re-execution without recompilation.
+
+### `bytecode` - Execute cartridge
+
+Runs a pre-compiled `.cart` file:
+
+```bash
+cargo run -- bytecode --file myprogram.cart
+```
+
+Cartridges execute faster than direct `run` since compilation is skipped.
+
+### Linking data
+
+Use `--link` to bundle extra files into a cartridge:
+
+```bash
+cargo run -- compile --file myprogram.coral --link assets/sprites.bin data/
+```
+
+Linked files are accessible through the `disk` module and file system APIs. Use `disk::linkedFileStart()` to find where linked data begins.
+
+### Debug mode
+
+Enable debug output to trace execution:
+
+```bash
+cargo run -- run --file myprogram.coral --debug
+```
+
+Debug output includes:
+- Device I/O operations (serial writes, audio updates, disk reads)
+- Memory operations (allocations, frees)
+- Function calls and returns
+- Bytecode instructions
+
+Useful for diagnosing crashes or understanding program flow.
 
 ## Minimal heap example
 

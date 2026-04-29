@@ -12,40 +12,46 @@ This repository contains a Coral Compiler, an executable/linking layer, and the 
 - A desktop session (the VM opens a graphics window and initializes audio output)
 - X11/XWayland support on Linux, due to the lack of window decorations on Wayland 
 
+### Install
+```bash
+chmod +x ./install.sh && ./install.sh
+```
+
+This script should work for both linux and MacOS, though Mac is untested, along with Windows. Read over the script carefully before running it.
 ### Run a Coral program
 
 ```bash
-cargo run -- run --file test/importTest.coral
+corallium run --file test/importTest.coral
 ```
 
 Enable the runtime debugger:
 
 ```bash
-cargo run -- run --file test/importTest.coral --debug
+corallium run --file test/importTest.coral --debug
 ```
 
 Compile to a cartridge (`.cart`):
 
 ```bash
-cargo run -- compile --file test/importTest.coral
+corallium compile --file test/importTest.coral
 ```
 
 Link one or more extra files or directories into the cartridge:
 
 ```bash
-cargo run -- compile --file test/importTest.coral --link path/to/file1 path/to/dir
+corallium compile --file test/importTest.coral --link path/to/file1 path/to/dir
 ```
 
 Run from a cartridge:
 
 ```bash
-cargo run -- bytecode --file test/importTest.cart
+corallium bytecode --file test/importTest.cart
 ```
 
 Show CLI help:
 
 ```bash
-cargo run -- --help
+corallium --help
 ```
 
 ## Coral language
@@ -84,9 +90,9 @@ Device I/O is invoked as `IO(device_id, command_id)`, with command arguments pas
 | Device ID | Device | Command IDs |
 | --- | --- | --- |
 | `0` | Disk | `0=read`, `1=write`, `2=loadSectors` |
-| `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound` |
+| `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound`, `7=setLoop` |
 | `2` | Clock | `0=read` |
-| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer`, `9=registerBitmap`, `10=removeBitmap` |
+| `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer`, `9=registerBitmap`, `10=removeBitmap`, `11=deltaTime` |
 | `4` | Serial | `0=write (null-terminated string ptr)`, `1=writeNum (i32)` |
 
 Graphics control mapping:
@@ -112,9 +118,9 @@ Graphics control mapping:
 - `test/` - small Coral examples & tests
 ## Demos
 
-You can run a demo game made for corralium in `demos/dinoGame/main.cart`. You can run: 
+You can run a demo game made for corralium in `demos/strider/strider.cart`. You can run: 
 ```bash
-cargo run --release -- bytecode --file demos/dinoGame/main.cart
+corallium bytecode --file demos/strider/strider.cart
 ```
 
 ## Credits

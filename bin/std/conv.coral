@@ -1,0 +1,61 @@
+fn to_u16(word: i16) -> i32 {
+    let raw: i32 = word as i32;
+    return match raw < (0 as i32) {
+        true -> raw + (65536 as i32),
+        _ -> raw
+    };
+}
+
+fn i32_from_i16_parts(low: i16, high: i16) -> i32 {
+    return to_u16(low) + ((high as i32) * (65536 as i32));
+}
+
+fn i16_part_from_i32(value: i32, part: i16) -> i16 {
+    let high: i32 = value / (65536 as i32);
+    let rem: i32 = value % (65536 as i32);
+    let adj_high: i32 = match (value < (0 as i32)) & (rem != (0 as i32)) {
+        true -> high - (1 as i32),
+        _ -> high
+    };
+    let low_u16: i32 = value - (adj_high * (65536 as i32));
+    let low_i16: i16 = match low_u16 > (32767 as i32) {
+        true -> (low_u16 - (65536 as i32)) as i16,
+        _ -> low_u16 as i16
+    };
+    return match part {
+        0 -> low_i16,
+        _ -> adj_high as i16
+    };
+}
+
+fn set_i16_part_in_i32(value: i32, part: i16, part_value: i16) -> i32 {
+    let low: i16 = i16_part_from_i32(value, 0);
+    let high: i16 = i16_part_from_i32(value, 1);
+    return match part {
+        0 -> i32_from_i16_parts(part_value, high),
+        _ -> i32_from_i16_parts(low, part_value)
+    };
+}
+
+fn get_i8_from_i16(word: i16, byte_index: i32) -> i16 {
+    let normalized: i32 = to_u16(word);
+    let value: i32 = match byte_index % (2 as i32) {
+        0 -> normalized % (256 as i32),
+        _ -> normalized / (256 as i32)
+    };
+    return value as i16;
+}
+
+fn set_i8_in_i16(word: i16, byte_index: i32, value: i16) -> i16 {
+    let normalized: i32 = to_u16(word);
+    let value_u8: i32 = (value as i32) % (256 as i32);
+    let lo: i32 = match byte_index % (2 as i32) {
+        0 -> value_u8,
+        _ -> normalized % (256 as i32)
+    };
+    let hi: i32 = match byte_index % (2 as i32) {
+        0 -> normalized / (256 as i32),
+        _ -> value_u8
+    };
+    return (lo + (hi * (256 as i32))) as i16;
+}

@@ -173,8 +173,8 @@ impl Backend {
         }
     }
 
-    pub fn new(input: &str, filename: &str) -> Self {
-        let mut ir_gen = IrGen::new(filename, input.to_string());
+    pub fn new(input: &str, filename: &str, stdloc: String) -> Self {
+        let mut ir_gen = IrGen::new(filename, input.to_string(), stdloc);
         ir_gen.compile();
         let mut registers = ir_gen.registers.clone();
         registers.sort_by_key(|x| x.id);

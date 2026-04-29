@@ -10,7 +10,7 @@ use compiler::compile_file;
 use genstdlibs::gen_libs;
 use std::{
     collections::HashMap,
-    env,
+    env::{self, consts::OS},
     ffi::CString,
     fs,
     path::{Path, PathBuf},
@@ -22,12 +22,16 @@ use vm::Machine;
 fn help() {
     println!("Corallium CLI");
     println!("Usage:");
-    println!("  --run --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
-    println!("  --compile --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
-    println!("  --bytecode --file <path.cart> [--debug]");
-    println!("  --genstd");
-    println!("  --test");
-    println!("  --help");
+    println!(
+        "  run --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...] [--std <location to stdlib>]"
+    );
+    println!(
+        "  compile --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...] [--std <location to stdlib>]"
+    );
+    println!("  bytecode --file <path.cart> [--debug]");
+    println!("  genstd");
+    println!("  test");
+    println!("  help");
 }
 
 fn collect_linked_files(path: &Path, linked_files: &mut Vec<String>) {
@@ -37,7 +41,10 @@ fn collect_linked_files(path: &Path, linked_files: &mut Vec<String>) {
     }
     if path.is_dir() {
         let mut entries = fs::read_dir(path)
-            .expect(&format!("Failed to read linked directory: {}", path.display()))
+            .expect(&format!(
+                "Failed to read linked directory: {}",
+                path.display()
+            ))
             .map(|entry| {
                 entry
                     .expect(&format!(
@@ -121,8 +128,26 @@ fn compile() {
         .position(|x| x == "--file")
         .expect("No file arg")
         + 1];
-    let exe = compile_file(file).expect("Compilation Failed");
+    let stdloc = match args.contains(&String::from("--std")) {
+        true => args[args
+            .iter()
+            .position(|x| x == "--std")
+            .expect("No std location provided")
+            + 1]
+        .clone(),
+        false => match OS {
+            "linux" => "/opt/Corallium/src/std".to_string(),
+            "macos" => "/usr/local/opt/Corallium/src/std".to_string(),
+            "windows" => {
+                // Use forward slashes which work on Windows in Rust
+                "C:/Program Files/Corallium/src/std".to_string()
+            },
+            _ => panic!("Unsupported OS: {}", OS),
+        },
+    };
+    let exe = compile_file(file, stdloc).expect("Compilation Failed");
     let debug = args.contains(&String::from("--debug"));
+
     let mut disk: Disk = vec![DiskSection {
         section_type: DiskSectionType::Entrypoint,
         id: 0,
@@ -143,7 +168,16 @@ fn compile_run() {
         .position(|x| x == "--file")
         .expect("No file arg")
         + 1];
-    let exe = compile_file(file).expect("Compilation Failed");
+    let stdloc = match args.contains(&String::from("--std")) {
+        true => args[args
+            .iter()
+            .position(|x| x == "--std")
+            .expect("No std location provided")
+            + 1]
+        .clone(),
+        false => "/opt/Corallium/std".to_string(),
+    };
+    let exe = compile_file(file, stdloc).expect("Compilation Failed");
     let debug = args.contains(&String::from("--debug"));
     let mut disk: Disk = vec![DiskSection {
         section_type: DiskSectionType::Entrypoint,

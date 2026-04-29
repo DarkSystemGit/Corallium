@@ -2,7 +2,7 @@ use crate::util::{convert_i16_to_i32, convert_i16_to_u32};
 use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
 use minifb::{self, Key, Scale, Window, WindowOptions};
-use std::{cell::RefCell, rc::Rc, vec};
+use std::{cell::RefCell, rc::Rc, time::Instant, vec};
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //Types
     //struct Atlas{
@@ -266,6 +266,17 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 .core
                 .stack
                 .push(DataType::Int32(color as i32), &mut machine.core.srp);
+        }
+        11 => {
+            //deltaTime() -> i32
+            let delta = get_gs(machine, device_id).delta_time_ms();
+            machine
+                .core
+                .stack
+                .push(DataType::Int32(delta), &mut machine.core.srp);
+            if machine.debug {
+                println!("IO.gfx.deltaTime -> {}", delta);
+            }
         }
         _ => {}
     }
@@ -559,6 +570,8 @@ pub struct GraphicsSystem {
     controls: Vec<Controls>,
     ptrs: GraphicsPtrs,
     queuedPixels: Vec<(usize, usize, u32)>,
+    last_render_at: Option<Instant>,
+    delta_time_ms: i32,
 }
 #[derive(Debug, Clone)]
 struct RegisteredBitmap {
@@ -626,6 +639,8 @@ impl GraphicsSystem {
                 atlas: 0,
             },
             queuedPixels: vec![],
+            last_render_at: None,
+            delta_time_ms: 0,
         };
         gs.background_layers.extend([
             BGLayer::new(TileMap::new(
@@ -697,6 +712,15 @@ impl GraphicsSystem {
         self.background_layers[layer as usize].tilemap.get_tile(loc);
     }
     pub fn render(&mut self) {
+        let now = Instant::now();
+        self.delta_time_ms = self
+            .last_render_at
+            .map(|last| {
+                let elapsed_ms = now.duration_since(last).as_millis();
+                elapsed_ms.min(i32::MAX as u128) as i32
+            })
+            .unwrap_or(0);
+        self.last_render_at = Some(now);
         self.display.clear();
 
         for layer in &mut self.background_layers {
@@ -753,6 +777,9 @@ impl GraphicsSystem {
                 }
             }
         }
+    }
+    pub fn delta_time_ms(&self) -> i32 {
+        self.delta_time_ms
     }
 }
 

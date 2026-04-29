@@ -1,9 +1,9 @@
-import "../../src/std/fs.coral";
-import "../../src/std/serial.h";
-import "../../src/std/gfx.h";
-import "../../src/std/audio.h";
-import "../../src/std/clock.h";
-import "../../src/std/mem.coral";
+import <fs>;
+import <serial>;
+import <gfx>;
+import <audio>;
+import <clock>;
+import <mem>;
 fn init_rand() -> &i32 {
     let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
     seed_ptr[0]=clock::read()+(1 as i32);
@@ -62,6 +62,7 @@ fn main()->void{
     audio::loadSound(9,startup.buf as [f32],(startup.len));
     fs::closeFile(startup);
     gfx::registerBitmap(bitmap);
+
     for(let i: i16=0;i<75;i=i+1){
         gfx::render();
     };
@@ -231,6 +232,12 @@ fn main()->void{
     gfx::registerSprite(cloudLayerTwo);
      gfx::registerSprite(player);
      gfx::registerBitmap(bitmap);
+     let song: fs::FileBuf=fs::openFile("linked/mainTheme.raw");
+     fs::readFile(song,0 as i32,None);
+     audio::masterVolume(200 as i32);
+     audio::volume(9,2.0);
+     audio::loadSound(9,song.buf as [f32],song.len as i32);
+      audio::setLoop(9, true);
     let controls: [bool;11]=[false;11];
     while(controls[8]==false){
         gfx::render();
@@ -239,7 +246,7 @@ fn main()->void{
     gfx::removeBitmap(bitmap);
     fs::closeFile(title);
     gfx::registerLayer(uiLayer);
-       let rand_ptr: &i32=init_rand();
+    let rand_ptr: &i32=init_rand();
 
     let cactus_slots: Buffer=Buffer{data: [(None as gfx::Sprite);30] as &void, len: 30};
     let next_slot: i16=0;
@@ -388,7 +395,7 @@ fn main()->void{
                      cactus_data[i].tilemap[0]=5;
 
                 };};};
-                if((frame%(random(rand_ptr,0,4) as i32))==(0 as i32)){
+                if((frame%(random(rand_ptr,1,4) as i32))==(0 as i32)){
 
                 if (cactus_data[i].tilemap[0]==9){
 
@@ -402,6 +409,7 @@ fn main()->void{
 
 
                         cactus_data[i]=(None as gfx::Sprite);
+                        continue;
                     };
 
                 };
@@ -439,6 +447,12 @@ fn main()->void{
         };
     };
     player.tilemap=[50];
+    audio::setLoop(9,false);
+    let death_sound: fs::FileBuf=fs::openFile("linked/death.raw");
+     fs::readFile(death_sound,0 as i32,None);
+     audio::pause();
+     audio::loadSound(9, death_sound.buf as [f32],death_sound.len as i32);
+     fs::closeFile(song);
     let dead_anim: bool=false;
     while(controls[8]==false){
         gfx::render();
@@ -470,6 +484,7 @@ fn main()->void{
             };
         };
         bgLayer.tilemap=game_over_Tilemap;
+        audio::unpause();
         dead_anim=true;
         };
     };

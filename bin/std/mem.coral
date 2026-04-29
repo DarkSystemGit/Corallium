@@ -1,0 +1,136 @@
+import "mem_core.h";
+struct HeapEntry {
+    size: i32,     //+0
+    is_free: bool, //+2
+    next: i32,     //+3
+    prev: i32,     //+5
+    data: [i16],   //+7
+}
+fn create_entry(ptr: i32,size: i32, free: bool,prev: i32,next: bool)->void{
+    mem_core::write_mem_ex(ptr,size);
+    mem_core::write_mem(ptr+(2 as i32),free as i16);
+    if (next){
+        mem_core::write_mem_ex(ptr+(3 as i32),ptr+(7 as i32)+size);
+    }else{
+        mem_core::write_mem_ex(ptr+(3 as i32),-1 as i32);
+    };
+    mem_core::write_mem_ex(ptr+(5 as i32),prev);
+    return;
+}
+fn init()->void{
+    let heap:i32=mem_core::heap_start();
+    create_entry(heap,0 as i32,false,-1 as i32,false);
+    return;
+}
+
+ fn ensure_init()->void{
+     let heap: i32=mem_core::heap_start();
+     let size: i32=mem_core::read_mem_ex(heap);
+     let free: bool=mem_core::read_mem(heap+(2 as i32)) as bool;
+     let next: i32=mem_core::read_mem_ex(heap+(3 as i32));
+     let prev: i32=mem_core::read_mem_ex(heap+(5 as i32));
+
+     // Uninitialized heap header pattern (all zeroed memory)
+     if ((size==(0 as i32)) and (!free) and (next==(0 as i32)) and (prev==(0 as i32))){
+         init();
+     };
+     return;
+ }
+fn alloc(size: i32)->&void{
+    ensure_init();
+    let ptr:i32=mem_core::heap_start();
+    while (ptr!=(-1 as i32)){
+        let current_size:i32=mem_core::read_mem_ex(ptr);
+        let next_entry:i32=mem_core::read_mem_ex(ptr+(3 as i32));
+        let free: bool=mem_core::read_mem(ptr+(2 as i32)) as bool;
+        if ((current_size>=size)and free){
+            if (current_size>(size+(7 as i32))){
+                //split block
+                let next: i32=ptr+(7 as i32)+size; //header+req space
+                create_entry(next,current_size-size-(7 as i32),true,ptr,next_entry!=(-1 as i32)); //create split entry |    orig space     |
+                mem_core::write_mem_ex(ptr+(3 as i32),next);//                                      | entry | new split |
+                mem_core::write_mem_ex(ptr,size);
+                if (next_entry!=(-1 as i32)){
+                    mem_core::write_mem_ex(next_entry+(5 as i32),next);
+                };
+            };
+            mem_core::write_mem(ptr+(2 as i32),false as i16); //mark used, return ptr
+            break;
+        };
+        if (next_entry==(-1 as i32)) {
+            //alloc new block
+            let next:i32=ptr+(7 as i32)+current_size; //get block start, current+size+header
+            create_entry(next,size,false,ptr,false);
+            mem_core::write_mem_ex(ptr+(3 as i32),next);
+            ptr=next;
+            break;
+        } else {
+            ptr=next_entry; //continue searching
+        };
+    };
+    return (ptr+(7 as i32)) as &void;
+
+}
+fn free(ptr: &void)->void{
+    let entry_ptr: i32=(ptr as i32)-(7 as i32);
+    mem_core::write_mem(entry_ptr+(2 as i32),true as i16); //mark free
+
+    let prev_ptr: i32=mem_core::read_mem_ex(entry_ptr+(5 as i32));
+    let next_ptr: i32=mem_core::read_mem_ex(entry_ptr+(3 as i32));
+    let prev_free: bool=false;
+    let next_free: bool=false;
+
+    if (prev_ptr!=(-1 as i32)){
+        prev_free=mem_core::read_mem(prev_ptr+(2 as i32)) as bool;
+    };
+    if (next_ptr!=(-1 as i32)){
+        next_free=mem_core::read_mem(next_ptr+(2 as i32)) as bool;
+    };
+
+    if (prev_free){
+        //merge into previous free block
+        let merged_size: i32=mem_core::read_mem_ex(prev_ptr)+mem_core::read_mem_ex(entry_ptr)+(7 as i32);
+        let merged_next: i32=next_ptr;
+        if (next_free){
+            merged_size=merged_size+mem_core::read_mem_ex(next_ptr)+(7 as i32);
+            merged_next=mem_core::read_mem_ex(next_ptr+(3 as i32));
+        };
+        mem_core::write_mem_ex(prev_ptr,merged_size);
+        mem_core::write_mem_ex(prev_ptr+(3 as i32),merged_next);
+        if (merged_next!=(-1 as i32)){
+            mem_core::write_mem_ex(merged_next+(5 as i32),prev_ptr);
+        };
+        return;
+    };
+
+    if (next_free){
+        //merge with next free block
+        let merged_size: i32=mem_core::read_mem_ex(entry_ptr)+mem_core::read_mem_ex(next_ptr)+(7 as i32);
+        let next_after_merge: i32=mem_core::read_mem_ex(next_ptr+(3 as i32));
+        mem_core::write_mem_ex(entry_ptr,merged_size);
+        mem_core::write_mem_ex(entry_ptr+(3 as i32),next_after_merge);
+        if (next_after_merge!=(-1 as i32)){
+            mem_core::write_mem_ex(next_after_merge+(5 as i32),entry_ptr);
+        };
+    };
+    return;
+}
+fn copy(buf1: &void, buf2: &void, len: i32, offset: i32)->void{
+    for (let i: i32 = 0; i<len; i = i+(1 as i32)){
+        let arr1: [i16]=(buf1 as [i16]);
+        let arr2: [i16]=(buf2 as [i16]);
+        arr2[i+offset]=arr1[i];
+    };
+    return;
+}
+fn compare(buf1: &void, buf2: &void, len: i32)->bool{
+    let same: bool=true;
+    for (let i: i32 =0; i<len; i = i+(1 as i32)){
+        let arr1: [i16]=(buf1 as [i16]);
+        let arr2: [i16]=(buf2 as [i16]);
+        arr2[i]==arr1[i];
+        let matches: bool=arr2[i]==arr1[i];
+        same=same and matches;
+    };
+    return same;
+}

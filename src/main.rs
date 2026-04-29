@@ -136,12 +136,9 @@ fn compile() {
             + 1]
         .clone(),
         false => match OS {
-            "linux" => "/opt/Corallium/src/std".to_string(),
-            "macos" => "/usr/local/opt/Corallium/src/std".to_string(),
-            "windows" => {
-                // Use forward slashes which work on Windows in Rust
-                "C:/Program Files/Corallium/src/std".to_string()
-            },
+            "linux" => "/opt/Corallium/std".to_string(),
+            "macos" => "/usr/local/opt/Corallium/std".to_string(),
+            "windows" => "C:/Program Files/Corallium/std".to_string(),
             _ => panic!("Unsupported OS: {}", OS),
         },
     };

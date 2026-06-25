@@ -1,7 +1,7 @@
 use crate::util::flatten_vec;
 use crate::util::pop_stack;
 use crate::util::unpack_float;
-use crate::vm::Machine;
+use crate::vm::{DataType, Machine};
 use arc_swap::{ArcSwap, ArcSwapAny};
 use hound;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -122,6 +122,53 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 }
             }
         }
+        8 => {
+            //schedule(channel, value, commandType, time)
+            if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                let args = pop_stack(&mut machine.core, 4);
+                let channel = args[0] as usize;
+                let value = args[1] as f32;
+                let command_type = args[2] as i32;
+                let time = args[3] as i32;
+                let command = match command_type {
+                    0 => Some(ScheduledCommand::Pan(value)),
+                    1 => Some(ScheduledCommand::Volume(value)),
+                    2 => Some(ScheduledCommand::Frequency(value)),
+                    3 => Some(ScheduledCommand::Loop(value != 0.0)),
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    audio.schedule_update(ScheduledUpdate {
+                        time,
+                        channel,
+                        command,
+                    });
+                    if machine.debug {
+                        println!(
+                            "IO.audio.schedule {} {} {} {}",
+                            channel, command_type, value, time
+                        );
+                    }
+                } else if machine.debug {
+                    println!("IO.audio.schedule invalid type {}", command_type);
+                }
+            }
+        }
+        9 => {
+            //masterClock() -> i32
+            let clock = if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                audio.master_clock()
+            } else {
+                0
+            };
+            machine
+                .core
+                .stack
+                .push(DataType::Int32(clock), &mut machine.core.srp);
+            if machine.debug {
+                println!("IO.audio.masterClock -> {}", clock);
+            }
+        }
         _ => {}
     }
 }
@@ -130,8 +177,10 @@ pub struct AudioDevice {
     pub sample_rate: u32,
     old_vol: f32,
     master_volume: Arc<AtomicI32>,
+    master_clock: Arc<AtomicI32>,
     device: Option<OutputDevice>,
     updates: Sender<(usize, ChannelUpdate)>,
+    scheduled_updates: Sender<ScheduledUpdate>,
 }
 impl std::fmt::Debug for AudioDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -140,12 +189,14 @@ impl std::fmt::Debug for AudioDevice {
             .field("sample_rate", &self.sample_rate)
             .field("old_vol", &self.old_vol)
             .field("master_volume", &self.master_volume)
+            .field("master_clock", &self.master_clock)
             .finish()
     }
 }
 impl AudioDevice {
     pub fn new() -> AudioDevice {
         let (tx, rx) = channel::<(usize, ChannelUpdate)>();
+        let (scheduled_tx, scheduled_rx) = channel::<ScheduledUpdate>();
         let mut a = AudioDevice {
             channels: mutex_channels(flatten_vec(vec![
                 gen_uninitialized_channels(gen_square_wave as WaveGenerator, 4, 10.0),
@@ -159,21 +210,29 @@ impl AudioDevice {
             sample_rate: 32000,
             old_vol: 1.0,
             master_volume: Arc::new(AtomicI32::new(100)),
+            master_clock: Arc::new(AtomicI32::new(0)),
             device: None,
             updates: tx,
+            scheduled_updates: scheduled_tx,
         };
-        a.run(rx);
+        a.run(rx, scheduled_rx);
         a
     }
     pub fn update_channel(&self, id: usize, update: ChannelUpdate) {
         self.updates.send((id, update)).err();
         //modify_channel_collection_item(id, &(self.channels), update);
     }
+    pub fn schedule_update(&self, update: ScheduledUpdate) {
+        self.scheduled_updates.send(update).err();
+    }
 
     pub fn set_master_volume(&self, volume: i32) {
         self.master_volume.store(volume, Relaxed);
     }
-    pub fn run(&mut self, rx: Receiver<(usize, ChannelUpdate)>) {
+    pub fn master_clock(&self) -> i32 {
+        self.master_clock.load(Relaxed)
+    }
+    pub fn run(&mut self, rx: Receiver<(usize, ChannelUpdate)>, scheduled_rx: Receiver<ScheduledUpdate>) {
         let params = OutputDeviceParameters {
             channels_count: 2,
             sample_rate: self.sample_rate as usize,
@@ -186,7 +245,9 @@ impl AudioDevice {
                     params.sample_rate as u32,
                     Arc::clone(&(self.channels)),
                     Arc::clone(&self.master_volume),
+                    Arc::clone(&self.master_clock),
                     rx,
+                    scheduled_rx,
                 ),
             )
             .expect("Could not initialize audio device"),
@@ -330,15 +391,33 @@ pub enum ChannelUpdate {
     WaveSample(Vec<f32>),
     Loop(bool),
 }
+
+#[derive(Debug, Clone)]
+struct ScheduledUpdate {
+    time: i32,
+    channel: usize,
+    command: ScheduledCommand,
+}
+
+#[derive(Debug, Clone)]
+enum ScheduledCommand {
+    Volume(f32),
+    Pan(f32),
+    Frequency(f32),
+    Loop(bool),
+}
 type WaveGenerator = fn(f32, f32) -> f32;
 fn gen_wave(
     sample_rate: u32,
     channels: ChannelCollection,
     master_volume: Arc<AtomicI32>,
+    master_clock: Arc<AtomicI32>,
     rx: Receiver<(usize, ChannelUpdate)>,
+    scheduled_rx: Receiver<ScheduledUpdate>,
 ) -> impl FnMut(&mut [f32]) {
     let mut channel_clocks: Vec<f32> = vec![0.0; channels.len()];
     let mut loaded_channels = Vec::with_capacity(10);
+    let mut scheduled: Vec<ScheduledUpdate> = Vec::new();
     move |data| {
         for (id, update) in rx.try_iter().take(50) {
             let reset_clock = matches!(&update, ChannelUpdate::WaveSample(_));
@@ -347,12 +426,36 @@ fn gen_wave(
                 channel_clocks[id] = 0.0;
             }
         }
+        for update in scheduled_rx.try_iter().take(50) {
+            let insert_at = scheduled
+                .iter()
+                .position(|existing| existing.time > update.time)
+                .unwrap_or(scheduled.len());
+            scheduled.insert(insert_at, update);
+        }
         loaded_channels.clear();
         for channel in channels.iter() {
             loaded_channels.push(channel.load());
         }
         let volume = (master_volume.load(Relaxed) as f32) / 100.0;
+        let mut current_frame = master_clock.load(Relaxed);
         for samples in data.chunks_exact_mut(2) {
+            while let Some(next) = scheduled.first() {
+                if next.time > current_frame {
+                    break;
+                }
+                let update = scheduled.remove(0);
+                let channel_update = match update.command {
+                    ScheduledCommand::Volume(value) => ChannelUpdate::Volume(value),
+                    ScheduledCommand::Frequency(value) => ChannelUpdate::Frequency(value),
+                    ScheduledCommand::Loop(enabled) => ChannelUpdate::Loop(enabled),
+                    ScheduledCommand::Pan(balance) => ChannelUpdate::Pan(pan_from_balance(balance)),
+                };
+                modify_channel_collection_item(update.channel, &channels, channel_update);
+                if update.channel < loaded_channels.len() {
+                    loaded_channels[update.channel] = channels[update.channel].load();
+                }
+            }
             let mut value_l = 0.0;
             let mut value_r = 0.0;
             for (i, channel) in loaded_channels.iter().enumerate() {
@@ -380,6 +483,11 @@ fn gen_wave(
             }
             samples[0] = clamp(value_l * volume);
             samples[1] = clamp(value_r * volume);
+            current_frame += 1;
+        }
+        let frames = (data.len() / 2) as i32;
+        if frames > 0 {
+            master_clock.fetch_add(frames, Relaxed);
         }
     }
 }
@@ -391,6 +499,18 @@ fn clamp(val: f32) -> f32 {
     } else {
         val
     }
+}
+fn pan_from_balance(balance: f32) -> [f32; 2] {
+    let clamped = if balance > 1.0 {
+        1.0
+    } else if balance < -1.0 {
+        -1.0
+    } else {
+        balance
+    };
+    let right = (clamped + 1.0) / 2.0;
+    let left = 1.0 - right;
+    [left, right]
 }
 fn gen_square_wave(phase: f32, volume: f32) -> f32 {
     (if phase < 0.5 { 1.0 } else { -1.0 }) * volume

@@ -53,6 +53,8 @@ fn main()->void{
     let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
     fs::readFile(boot_screen_file,0 as i32,None);
     let bitmap: gfx::Bitmap=gfx::Bitmap{
+        x: 0,
+        y: 0,
         width: 320,
         length: 240,
         data: boot_screen_file.buf as [i32]
@@ -433,7 +435,7 @@ fn main()->void{
             player_accel=player_accel-2.0;
         };
         if(player_accel!=0.0){
-            player_accel=player_accel+0.05;
+            player_accel=player_accel+0.03;
         };
         if(py_float>168.0){
             py_float=168.0;

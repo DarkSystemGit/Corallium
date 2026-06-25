@@ -1228,7 +1228,7 @@ impl Stack {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandType {
     Add,
     Sub,

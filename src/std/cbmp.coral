@@ -1,0 +1,217 @@
+import "gfx.h";
+import "fs.coral";
+import "mem.coral";
+import "conv.coral";
+
+fn from_file(file: fs::FileBuf) -> gfx::Bitmap {
+    let words: [i16] = file.buf as [i16];
+    let data_ptr: &void = ((file.buf as i32) + (2 as i32)) as &void;
+    return gfx::Bitmap {
+        x: 0 as i16,
+        y: 0 as i16,
+        length: words[1],
+        width: words[0],
+        data: data_ptr as [i32]
+    };
+}
+
+fn select_area(
+    source: gfx::Bitmap,
+    x: i16,
+    y: i16,
+    area_width: i16,
+    area_height: i16
+) -> gfx::Bitmap {
+    let out_width: i16 = match area_width > (0 as i16) {
+        true -> area_width,
+        _ -> 0 as i16
+    };
+    let out_height: i16 = match area_height > (0 as i16) {
+        true -> area_height,
+        _ -> 0 as i16
+    };
+
+    let out_width_i32: i32 = out_width as i32;
+    let out_height_i32: i32 = out_height as i32;
+    let source_width_i32: i32 = source.width as i32;
+    let source_height_i32: i32 = source.length as i32;
+    let x_i32: i32 = x as i32;
+    let y_i32: i32 = y as i32;
+    let pixel_count: i32 = out_width_i32 * out_height_i32;
+    let output_pixels: [i32] = mem::alloc(pixel_count * (2 as i32)) as [i32];
+    let source_pixels: [i32] = source.data;
+    let in_bounds_rect: bool =
+        (x_i32 >= (0 as i32)) and
+        (y_i32 >= (0 as i32)) and
+        ((x_i32 + out_width_i32) <= source_width_i32) and
+        ((y_i32 + out_height_i32) <= source_height_i32);
+
+    if (in_bounds_rect) {
+        if ((x_i32 == (0 as i32)) and (out_width_i32 == source_width_i32)) {
+            let source_start: i32 = y_i32 * source_width_i32;
+            for (let i: i32 = 0; i < pixel_count; i = i + (1 as i32)) {
+                output_pixels[i] = source_pixels[source_start + i];
+            };
+        } else {
+            for (let row: i32 = 0; row < out_height_i32; row = row + (1 as i32)) {
+                let src_row_pixel_start: i32 = ((y_i32 + row) * source_width_i32) + x_i32;
+                let dst_row_pixel_start: i32 = row * out_width_i32;
+                for (let col: i32 = 0; col < out_width_i32; col = col + (1 as i32)) {
+                    output_pixels[dst_row_pixel_start + col] = source_pixels[src_row_pixel_start + col];
+                };
+            };
+        };
+        return gfx::Bitmap {
+            x: 0 as i16,
+            y: 0 as i16,
+            length: out_height,
+            width: out_width,
+            data: output_pixels
+        };
+    };
+
+    for (let i: i32 = 0; i < pixel_count; i = i + (1 as i32)) {
+        output_pixels[i] = 0 as i32;
+    };
+
+    let src_x0: i32 = match x_i32 > (0 as i32) {
+        true -> x_i32,
+        _ -> 0 as i32
+    };
+    let src_y0: i32 = match y_i32 > (0 as i32) {
+        true -> y_i32,
+        _ -> 0 as i32
+    };
+    let src_x1: i32 = match (x_i32 + out_width_i32) < source_width_i32 {
+        true -> x_i32 + out_width_i32,
+        _ -> source_width_i32
+    };
+    let src_y1: i32 = match (y_i32 + out_height_i32) < source_height_i32 {
+        true -> y_i32 + out_height_i32,
+        _ -> source_height_i32
+    };
+
+    if ((src_x0 < src_x1) and (src_y0 < src_y1)) {
+        let dst_start_x: i32 = src_x0 - x_i32;
+        let dst_start_y: i32 = src_y0 - y_i32;
+        let copy_pixels_per_row: i32 = src_x1 - src_x0;
+        let clipped_height: i32 = src_y1 - src_y0;
+
+        for (let row: i32 = 0; row < clipped_height; row = row + (1 as i32)) {
+            let src_row_pixel_start: i32 = ((src_y0 + row) * source_width_i32) + src_x0;
+            let dst_row_pixel_start: i32 = ((dst_start_y + row) * out_width_i32) + dst_start_x;
+            for (let col: i32 = 0; col < copy_pixels_per_row; col = col + (1 as i32)) {
+                output_pixels[dst_row_pixel_start + col] = source_pixels[src_row_pixel_start + col];
+            };
+        };
+    };
+
+    return gfx::Bitmap {
+        x: 0 as i16,
+        y: 0 as i16,
+        length: out_height,
+        width: out_width,
+        data: output_pixels
+    };
+}
+
+fn free_bitmap(bitmap: gfx::Bitmap) -> void {
+    mem::free(bitmap.data as &void);
+    return;
+}
+
+fn bitmap_to_atlas(bitmap: gfx::Bitmap, count: i16, pad_x: i16, pad_y: i16) -> [i16] {
+    let count_i32: i32 = match (count as i32) > (0 as i32) {
+        true -> count as i32,
+        _ -> 0 as i32
+    };
+    let pad_x_i32: i32 = match (pad_x as i32) > (0 as i32) {
+        true -> pad_x as i32,
+        _ -> 0 as i32
+    };
+    let pad_y_i32: i32 = match (pad_y as i32) > (0 as i32) {
+        true -> pad_y as i32,
+        _ -> 0 as i32
+    };
+    let step_x: i32 = (8 as i32) + pad_x_i32;
+    let step_y: i32 = (8 as i32) + pad_y_i32;
+    let width_i32: i32 = bitmap.width as i32;
+    let height_i32: i32 = bitmap.length as i32;
+    let tiles_per_row: i32 = match width_i32 > (0 as i32) {
+        true -> (width_i32 + step_x - (1 as i32)) / step_x,
+        _ -> 0 as i32
+    };
+    let tiles_per_col: i32 = match height_i32 > (0 as i32) {
+        true -> (height_i32 + step_y - (1 as i32)) / step_y,
+        _ -> 0 as i32
+    };
+    let max_tiles: i32 = tiles_per_row * tiles_per_col;
+    let copy_capacity: i32 = match count_i32 > (0 as i32) {
+        true -> count_i32 - (1 as i32),
+        _ -> 0 as i32
+    };
+    let copy_tiles: i32 = match copy_capacity < max_tiles {
+        true -> copy_capacity,
+        _ -> max_tiles
+    };
+    let atlas_words_len: i32 = (1 as i32) + (count_i32 * (64 as i32) * (2 as i32));
+    let atlas_words: [i16] = mem::alloc(atlas_words_len) as [i16];
+    let source_pixels: [i32] = bitmap.data;
+
+    for (let i: i32 = 0; i < atlas_words_len; i = i + (1 as i32)) {
+        atlas_words[i] = 0 as i16;
+    };
+    atlas_words[0] = count_i32 as i16;
+
+    for (let src_tile_i: i32 = 0; src_tile_i < copy_tiles; src_tile_i = src_tile_i + (1 as i32)) {
+        let tile_x: i32 = src_tile_i % tiles_per_row;
+        let tile_y: i32 = src_tile_i / tiles_per_row;
+        let atlas_tile_i: i32 = src_tile_i + (1 as i32);
+        let src_base_x: i32 = tile_x * step_x;
+        let src_base_y: i32 = tile_y * step_y;
+        let dst_tile_word_start: i32 = (1 as i32) + (atlas_tile_i * (64 as i32) * (2 as i32));
+        let full_tile_in_bounds: bool =
+            ((src_base_x + (8 as i32)) <= width_i32) and
+            ((src_base_y + (8 as i32)) <= height_i32);
+
+        if (full_tile_in_bounds) {
+            for (let py: i32 = 0; py < (8 as i32); py = py + (1 as i32)) {
+                let src_row_start: i32 = ((src_base_y + py) * width_i32) + src_base_x;
+                let dst_row_start: i32 = dst_tile_word_start + (py * (8 as i32) * (2 as i32));
+                for (let px: i32 = 0; px < (8 as i32); px = px + (1 as i32)) {
+                    let color: i32 = source_pixels[src_row_start + px];
+                    let dst_word: i32 = dst_row_start + (px * (2 as i32));
+                    atlas_words[dst_word] = conv::i16_part_from_i32(color, 0 as i16);
+                    atlas_words[dst_word + (1 as i32)] = conv::i16_part_from_i32(color, 1 as i16);
+                };
+            };
+        } else {
+            for (let py: i32 = 0; py < (8 as i32); py = py + (1 as i32)) {
+                for (let px: i32 = 0; px < (8 as i32); px = px + (1 as i32)) {
+                    let sx: i32 = src_base_x + px;
+                    let sy: i32 = src_base_y + py;
+                    let in_bounds: bool =
+                        (sx >= (0 as i32)) and
+                        (sy >= (0 as i32)) and
+                        (sx < width_i32) and
+                        (sy < height_i32);
+                    let color: i32 = match in_bounds {
+                        true -> source_pixels[(sy * width_i32) + sx],
+                        _ -> 0 as i32
+                    };
+                    let pixel_i: i32 = (py * (8 as i32)) + px;
+                    let dst_word: i32 = dst_tile_word_start + (pixel_i * (2 as i32));
+                    atlas_words[dst_word] = conv::i16_part_from_i32(color, 0 as i16);
+                    atlas_words[dst_word + (1 as i32)] = conv::i16_part_from_i32(color, 1 as i16);
+                };
+            };
+        };
+    };
+
+    return atlas_words;
+}
+
+fn free_atlas(atlas: [i16]) -> void {
+    mem::free(atlas as &void);
+    return;
+}

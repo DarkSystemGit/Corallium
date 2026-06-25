@@ -46,7 +46,7 @@ This script:
 After installation, you can run Coral programs from anywhere:
 
 ```bash
-corallium run --file myprogram.coral
+corallium compile --file myprogram.coral && corallium run --file myprogram.cart
 ```
 
 ### Manual build without installation
@@ -69,39 +69,34 @@ cargo run --release -- run --file test/importTest.coral
 If the stdlib is not in the default location, use the `--std` flag to specify its path:
 
 ```bash
-corallium run --file myprogram.coral --std /path/to/stdlib
+corallium compile --file myprogram.coral --std /path/to/stdlib
 ```
 
 ## Quick start
 
-Run a Coral file directly:
-
-```bash
-cargo run -- run --file test/importTest.coral
-```
 
 Compile a Coral file to a `.cart` cartridge:
 
 ```bash
-cargo run -- compile --file test/importTest.coral
+corallium compile --file test/importTest.coral
 ```
 
 Run a compiled cartridge:
 
 ```bash
-cargo run -- bytecode --file test/importTest.cart
+corallium run --file test/importTest.cart
 ```
 
 Link extra data files or directories into a cartridge:
 
 ```bash
-cargo run -- compile --file test/importTest.coral --link path/to/file path/to/dir
+corallium compile --file test/importTest.coral --link path/to/file path/to/dir
 ```
 
 Enable debug output during execution:
 
 ```bash
-cargo run -- run --file test/importTest.coral --debug
+corallium run --file test/importTest.cart --debug
 ```
 
 ## Basic syntax
@@ -308,6 +303,8 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn masterVolume(newVolume: i32) -> void` | Set master output volume. |
 | `fn loadSound(channel: i16, sample: [f32], len: i32) -> void` | Load sample data into a channel. |
 | `fn setLoop(channel: i16, enabled: bool) -> void` | Enable or disable looping for a sample channel. |
+| `fn schedule(channel: i16, time: i32, commandType: i16, value: f32) -> void` | Schedule a channel change at a specific audio master clock sample index. |
+| `fn masterClock() -> i32` | Read the current audio master clock sample index. |
 
 #### How audio works
 
@@ -350,6 +347,14 @@ Sample channels play loaded sound data:
 - `pan(channel, left, right)` routes the channel to speakers: `pan(0, 1.0, 0.0)` sends fully left, `pan(0, 0.5, 0.5)` sends to both equally.
 - `masterVolume(level)` scales the entire output (e.g., `100` is full volume).
 - All 10 channels mix together for final output, clamped to prevent clipping.
+
+**Scheduling changes:**
+
+- `masterClock()` returns the current audio master clock sample index.
+- `schedule(channel, time, commandType, value)` queues a change at an absolute master clock **sample** index (0-based).
+- `commandType` values: `0=pan`, `1=volume`, `2=frequency`, `3=loop`.
+- `pan` uses a `value` in `-1.0..1.0` (left=-1, right=1).
+- `loop` treats `value != 0.0` as enabled.
 
 Example: Play a looping sound sample with manual controls
 
@@ -591,22 +596,12 @@ Low-level bit and byte manipulation utilities for converting between multi-word 
 
 ## Execution modes
 
-### `run` - Direct execution
-
-Compiles and runs a Coral file immediately:
-
-```bash
-cargo run -- run --file myprogram.coral
-```
-
-Useful for development and testing. Output appears in the console and graphics/audio play in real-time.
-
 ### `compile` - Build to cartridge
 
 Compiles to a `.cart` (cartridge) file, which is a portable binary containing compiled bytecode and linked data:
 
 ```bash
-cargo run -- compile --file myprogram.coral
+corallium compile --file myprogram.coral
 ```
 
 The `.cart` format is optimized for distribution and re-execution without recompilation.
@@ -616,7 +611,7 @@ The `.cart` format is optimized for distribution and re-execution without recomp
 Runs a pre-compiled `.cart` file:
 
 ```bash
-cargo run -- bytecode --file myprogram.cart
+corallium run --file myprogram.cart
 ```
 
 Cartridges execute faster than direct `run` since compilation is skipped.
@@ -626,7 +621,7 @@ Cartridges execute faster than direct `run` since compilation is skipped.
 Use `--link` to bundle extra files into a cartridge:
 
 ```bash
-cargo run -- compile --file myprogram.coral --link assets/sprites.bin data/
+corallium compile --file myprogram.coral --link assets/sprites.bin data/
 ```
 
 Linked files are accessible through the `disk` module and file system APIs. Use `disk::linkedFileStart()` to find where linked data begins.
@@ -636,7 +631,7 @@ Linked files are accessible through the `disk` module and file system APIs. Use 
 Enable debug output to trace execution:
 
 ```bash
-cargo run -- run --file myprogram.coral --debug
+corallium run --file myprogram.coral --debug
 ```
 
 Debug output includes:

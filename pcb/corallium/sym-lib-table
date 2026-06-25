@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "corallium-eagle-import") (type "KiCad") (uri "${KIPRJMOD}/corallium-eagle-import.kicad_sym") (options "") (descr ""))
+)

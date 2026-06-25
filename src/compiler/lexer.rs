@@ -23,6 +23,31 @@ impl Lexer {
         }
         tokens
     }
+    fn read_escape(&mut self) -> Option<char> {
+        match self.input.next() {
+            Some('n') => Some('\n'),
+            Some('r') => Some('\r'),
+            Some('t') => Some('\t'),
+            Some('0') => Some('\0'),
+            Some('\\') => Some('\\'),
+            Some('"') => Some('"'),
+            Some('\'') => Some('\''),
+            Some('x') => {
+                let hi = self.input.peek();
+                let lo = self.input.peek_next(1);
+                if hi.map_or(false, is_hex_digit) && lo.map_or(false, is_hex_digit) {
+                    let hi = self.input.next().unwrap();
+                    let lo = self.input.next().unwrap();
+                    let hex = format!("{}{}", hi, lo);
+                    u8::from_str_radix(&hex, 16).ok().map(|v| v as char)
+                } else {
+                    Some('x')
+                }
+            }
+            Some(c) => Some(c),
+            None => None,
+        }
+    }
     fn read_token(&mut self) -> Token {
         let start = self.input.position;
         let ch = self.input.next().unwrap();
@@ -119,7 +144,10 @@ impl Lexer {
             '.' => Token::new(TokenKind::Operator(OperatorKind::Dot), start, start + 1),
             '/' => {
                 if self.input.matchTk('/') {
-                    while self.input.peek() != Some('\n') {
+                    while self.input.peek().is_some() && self.input.peek() != Some('\n') {
+                        self.input.next();
+                    }
+                    if self.input.peek() == Some('\n') {
                         self.input.next();
                     }
                     Token::new(TokenKind::None, start, start)
@@ -180,12 +208,22 @@ impl Lexer {
             '^' => Token::new(TokenKind::Operator(OperatorKind::Xor), start, start + 1),
             '"' => {
                 let mut string = String::new();
-                while self.input.peek().is_some() && self.input.peek().unwrap() != '"' {
-                    string.push(self.input.next().unwrap());
+                while self.input.peek().is_some() && self.input.peek() != Some('"') {
+                    if self.input.peek() == Some('\\') {
+                        self.input.next();
+                        if let Some(escaped) = self.read_escape() {
+                            string.push(escaped);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        string.push(self.input.next().unwrap());
+                    }
                 }
-                self.input.next();
-                let end = start + string.len() + 2;
-                Token::new(TokenKind::String(string), start, end)
+                if self.input.peek() == Some('"') {
+                    self.input.next();
+                }
+                Token::new(TokenKind::String(string), start, self.input.position)
             }
             c => {
                 if is_whitespace(c) {

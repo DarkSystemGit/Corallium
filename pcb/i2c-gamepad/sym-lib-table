@@ -1,0 +1,4 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "Gamepad Seesaw QT rev A-eagle-import") (type "KiCad") (uri "${KIPRJMOD}/Gamepad Seesaw QT rev A-eagle-import.kicad_sym") (options "") (descr ""))
+)

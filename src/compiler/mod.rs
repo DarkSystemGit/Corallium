@@ -5,21 +5,25 @@ use std::{
     path::PathBuf,
 };
 
-use crate::executable::{Executable, Library};
+use crate::{
+    assembler::assemble,
+    assembler::codegen::Object,
+    executable::{Executable, Library},
+};
 use backend::Backend;
 pub mod backend;
 pub mod ir;
 pub mod lexer;
 pub mod parser;
 
-fn normalize_path(path: &Path) -> String {
+pub fn normalize_path(path: &Path) -> String {
     fs::canonicalize(path)
         .ok()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
-fn collect_import_libs(
+pub fn collect_import_libs(
     imports: &[String],
     libs: &mut Vec<Library>,
     active_sources: &mut HashSet<String>,
@@ -28,8 +32,8 @@ fn collect_import_libs(
     stdloc: String,
 ) -> Option<()> {
     for import in imports {
-        match Path::new(import).extension()?.to_str()? == "h" {
-            true => {
+        match Path::new(import).extension()?.to_str()? {
+            "h" => {
                 let mut bin_path = PathBuf::from(import);
                 bin_path.set_extension("bin");
                 let normalized_bin = normalize_path(&bin_path);
@@ -42,7 +46,7 @@ fn collect_import_libs(
                     libs.push(lib);
                 }
             }
-            false => {
+            "coral" => {
                 let normalized_source = normalize_path(Path::new(import));
                 if let Some(lib) = source_cache.get(&normalized_source) {
                     libs.push(lib.clone());
@@ -76,6 +80,44 @@ fn collect_import_libs(
                 source_cache.insert(normalized_source, lib.clone());
                 libs.push(lib);
             }
+            "polyp" => {
+                let normalized_source = normalize_path(Path::new(import));
+                if let Some(lib) = source_cache.get(&normalized_source) {
+                    libs.push(lib.clone());
+                    continue;
+                }
+                if !active_sources.insert(normalized_source.clone()) {
+                    continue;
+                }
+                let file =
+                    fs::read_to_string(import).expect(&format!("Failed to read path {}", import));
+                let (obj, imports) = assemble(
+                    &Path::new(import).file_stem()?.to_str()?.to_string(),
+                    &file,
+                    true,
+                );
+                let mut nested_libs = vec![];
+                collect_import_libs(
+                    imports.clone().as_slice(),
+                    &mut nested_libs,
+                    active_sources,
+                    source_cache,
+                    header_cache,
+                    stdloc.clone(),
+                )?;
+
+                let mut lib = Library::new(Path::new(import).file_stem()?.to_str()?.to_string());
+                for nested in nested_libs {
+                    nested.link_lib(&mut lib);
+                }
+                if let Some(Object::Lib(l)) = obj {
+                    lib = l;
+                };
+                active_sources.remove(&normalized_source);
+                source_cache.insert(normalized_source, lib.clone());
+                libs.push(lib);
+            }
+            _ => {}
         }
     }
     Some(())

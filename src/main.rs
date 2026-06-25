@@ -1,15 +1,21 @@
+mod assembler;
 mod compiler;
 mod devices;
 mod executable;
 mod genstdlibs;
+mod sdk;
 mod test;
 mod util;
 mod vm;
+use crate::devices::RawDevice;
 use crate::devices::disk::*;
-use compiler::compile_file;
+use assembler::assemble;
+use assembler::codegen::Object;
+use compiler::{collect_import_libs, compile_file, normalize_path};
+
 use genstdlibs::gen_libs;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env::{self, consts::OS},
     ffi::CString,
     fs,
@@ -23,12 +29,13 @@ fn help() {
     println!("Corallium CLI");
     println!("Usage:");
     println!(
-        "  run --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...] [--std <location to stdlib>]"
-    );
-    println!(
         "  compile --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...] [--std <location to stdlib>]"
     );
-    println!("  bytecode --file <path.cart> [--debug]");
+    println!("  assemble --file <path.polyp> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
+    println!("  run --file <path.cart> [--debug]");
+    println!("  sdk");
+    println!("      convert_music <input_midi_file> [--wav-preview]");
+    println!("      convert_image <input_image_file>");
     println!("  genstd");
     println!("  test");
     println!("  help");
@@ -142,6 +149,7 @@ fn compile() {
             _ => panic!("Unsupported OS: {}", OS),
         },
     };
+
     let exe = compile_file(file, stdloc).expect("Compilation Failed");
     let debug = args.contains(&String::from("--debug"));
 
@@ -186,9 +194,17 @@ fn compile_run() {
     let mut machine = Machine::new(debug);
     machine.set_disk(disk);
     machine.run();
-    if args.contains(&"--save-disk".to_string()) {
-        //save_disk(machine.devic, path)
-    }
+    /*if args.contains(&"--save-disk".to_string()) {
+        save_disk(
+            (if let RawDevice::Disk(disk) = &machine.devices[0].contents {
+                Some(disk)
+            } else {
+                None
+            })
+            .unwrap(),
+            path,
+        );
+    }*/
 }
 fn run_bytecode() {
     let args: Vec<String> = env::args().collect();
@@ -203,17 +219,98 @@ fn run_bytecode() {
     machine.set_disk(disk);
     machine.run();
     if args.contains(&"--save-disk".to_string()) {
-        //save_disk(machine.devic, path)
+        save_disk(
+            (if let RawDevice::Disk(disk) = &machine.devices[0].contents {
+                Some(disk)
+            } else {
+                None
+            })
+            .unwrap(),
+            file,
+        );
+    }
+}
+fn assembler() {
+    let args: Vec<String> = env::args().collect();
+    let path = &args[args
+        .iter()
+        .position(|x| x == "--file")
+        .expect("No file arg")
+        + 1];
+    let file = fs::read_to_string(path).expect(&format!("Failed to read path {}", path));
+    let (obj, imports) = assembler::assemble(path, &file, args.contains(&("--lib".to_string())));
+    let obj = obj.expect("Assembly failed");
+    let debug = args.contains(&String::from("--debug"));
+
+    let mut disk: Disk = vec![DiskSection {
+        section_type: DiskSectionType::Entrypoint,
+        id: 0,
+        data: vec![],
+    }] as Disk;
+    let mut import_libs = vec![];
+    let mut active_sources = HashSet::new();
+    let mut source_cache = HashMap::new();
+    let mut header_cache = HashMap::new();
+    active_sources.insert(normalize_path(Path::new(path)));
+    collect_import_libs(
+        &imports,
+        &mut import_libs,
+        &mut active_sources,
+        &mut source_cache,
+        &mut header_cache,
+        String::new(),
+    )
+    .expect("Failed to resolve imports");
+    match obj {
+        Object::Exe(mut exe) => {
+            for lib in import_libs {
+                lib.link(&mut exe);
+            }
+            exe.build(0, &mut disk, debug);
+            append_linked_files(&args, &mut disk);
+            let mut write_path = PathBuf::from(path);
+            write_path.set_extension("cart");
+            save_disk(&disk, write_path).expect("Failed to write disk image");
+        }
+        Object::Lib(mut lib) => {
+            for ilib in import_libs {
+                ilib.link_lib(&mut lib);
+            }
+            let mut write_path = PathBuf::from(path);
+            write_path.set_extension("bin");
+            lib.to_file(write_path).expect("Couldn't write file");
+        }
+    }
+}
+fn sdk() {
+    let args: Vec<String> = env::args().collect();
+    match args.get(2).map(|s| s.as_str()) {
+        Some("convert_music") => {
+            let input = args.get(3).expect("No input file provided");
+            let wav_preview = args.get(4).map(|s| s.as_str()) == Some("--wav-preview");
+            sdk::music_converter::convert_music(input, wav_preview)
+                .expect("Music conversion failed");
+        }
+        Some("convert_image") => {
+            let input = args.get(3).expect("No input image file provided");
+            sdk::image_converter::convert_image(input).expect("Image conversion failed");
+        }
+        _ => {
+            println!("SDK Commands:");
+            println!("  convert_music <input_midi_file> [--wav-preview]");
+            println!("  convert_image <input_image_file>");
+        }
     }
 }
 fn main() {
     let map: HashMap<&'static str, fn()> = HashMap::from([
         ("test", run_cases as fn()),
-        ("run", compile_run as fn()),
         ("compile", compile as fn()),
+        ("assemble", assembler as fn()),
         ("genstd", gen_libs as fn()),
-        ("bytecode", run_bytecode as fn()),
+        ("run", run_bytecode as fn()),
         ("help", help as fn()),
+        ("sdk", sdk as fn()),
     ]);
     for (word, fun) in map {
         if env::args()

@@ -310,6 +310,38 @@ fn gen_audio() -> io::Result<()> {
         ]],
     ));
 
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "schedule".to_string(),
+        vec![1, 2, 1, 2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(2),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(3),
+            Bytecode::Command(CommandType::Loadf),  Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::Pushf),  Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(8),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "masterClock".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID), Bytecode::Int(9),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),               Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
     let out = Path::new("src/std/audio.bin");
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent)?;
@@ -329,7 +361,15 @@ fn gen_clock() -> io::Result<()> {
             Bytecode::Command(CommandType::Return), Bytecode::Int(1),               Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));
-
+    #[rustfmt::skip]
+    clock.add_fn(Fn::new_with_blocks(
+        "readMs".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(CLOCK_DEVICE_ID), Bytecode::Int(1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),               Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
     let out = Path::new("src/std/clock.bin");
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent)?;

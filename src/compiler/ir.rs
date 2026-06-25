@@ -278,6 +278,57 @@ impl IrGen {
             }
         }
     }
+    fn incorperate_local_header(&mut self, header: Header, loc: SourceLocation) {
+        let fn_base = self.next_fn_id;
+        for sym in header.symbols {
+            let sym_name = sym.name.clone();
+            match sym.body {
+                Definition::Function(ty, id) => {
+                    self.define_function(sym_name.clone(), ty.clone(), id + fn_base);
+                    let mut implict_params = Vec::new();
+                    let rty = match &ty {
+                        TypeKind::Function(_, r) => *r.clone(),
+                        _ => unreachable!(),
+                    };
+                    if self.is_internal_ptr(rty.clone()) {
+                        implict_params.push(ImplicitParam {
+                            name: Some(format!(
+                                ".sret_{}",
+                                rand::rng()
+                                    .sample_iter(&Alphanumeric)
+                                    .take(32)
+                                    .map(|c| c as char)
+                                    .collect::<String>()
+                            )),
+                            ty: self.unwrap_ptr_ty(rty.clone()).unwrap(),
+                            param_ty: ImplicitParamType::ReturnPassthorugh,
+                        });
+                    }
+                    self.functions.push(Function {
+                        name: sym_name,
+                        body: vec![],
+                        jump_stack: vec![],
+                        current_block: 0,
+                        loop_stack: vec![],
+                        loop_patches: HashMap::new(),
+                        next_id: 0,
+                        next_param_id: 0,
+                        symbols: vec![],
+                        return_ty: rty,
+                        implict_params,
+                        compile: false,
+                    });
+                    self.next_fn_id += 1;
+                }
+                Definition::User(userty) => {
+                    self.define_user_type(sym_name, userty);
+                }
+                _ => {
+                    self.emitError(loc, "Global variables are not supported");
+                }
+            }
+        }
+    }
     fn get_next_symbol_id(&mut self) -> usize {
         let r = self.functions[self.current_fn].next_id.clone();
         self.functions[self.current_fn].next_id += 1;
@@ -387,6 +438,10 @@ impl IrGen {
         None
     }
     pub fn compile(&mut self) {
+        self.incorperate_local_header(
+            self.header.clone(),
+            SourceLocation { line: 0, col: 0 },
+        );
         for stmt in self.input.clone().iter() {
             self.compile_statement(stmt.clone());
         }
@@ -468,17 +523,36 @@ impl IrGen {
         self.define_user_type(enumDef.name, UserType::Enum(enumDef.variants));
     }
     fn compile_function(&mut self, func: FunctionDeclaration, loc: SourceLocation) {
-        self.define_function(
-            func.name.clone(),
-            TypeKind::Function(
-                func.params.values().map(|x| x.clone()).collect(),
-                Box::new(func.return_ty.clone()),
-            ),
-            self.next_fn_id,
+        let functy = TypeKind::Function(
+            func.params.values().map(|x| x.clone()).collect(),
+            Box::new(func.return_ty.clone()),
         );
+        let mut predeclared_id = None;
+        if let Some(symbol) = self.lookup_symbol(&func.name) {
+            if let Definition::Function(existing_ty, id) = &symbol.body {
+                if *existing_ty != functy {
+                    self.emitError(
+                        loc,
+                        &format!(
+                            "Function signature mismatch for {}, expected {}, got {}",
+                            func.name, existing_ty, functy
+                        ),
+                    );
+                }
+                predeclared_id = Some(*id);
+            }
+        }
+        let func_id = match predeclared_id {
+            Some(id) => id,
+            None => {
+                self.define_function(func.name.clone(), functy.clone(), self.next_fn_id);
+                let id = self.next_fn_id;
+                self.next_fn_id += 1;
+                id
+            }
+        };
         let curr_fn = self.current_fn;
-        self.next_fn_id += 1;
-        self.current_fn = self.next_fn_id - 1;
+        self.current_fn = func_id;
         self.push_scope();
         let mut implict_params = Vec::new();
         if self.is_internal_ptr(func.return_ty.clone()) {
@@ -495,7 +569,7 @@ impl IrGen {
                 param_ty: ImplicitParamType::ReturnPassthorugh,
             });
         }
-        self.functions.push(Function {
+        let compiled_fn = Function {
             name: func.name.clone(),
             body: vec![vec![]],
             jump_stack: vec![],
@@ -508,7 +582,28 @@ impl IrGen {
             return_ty: func.return_ty,
             implict_params,
             compile: true,
-        });
+        };
+        if self.functions.len() > func_id {
+            self.functions[func_id] = compiled_fn;
+        } else if self.functions.len() == func_id {
+            self.functions.push(compiled_fn);
+        } else {
+            self.functions.resize_with(func_id, || Function {
+                name: String::new(),
+                body: vec![],
+                jump_stack: vec![],
+                current_block: 0,
+                loop_stack: vec![],
+                loop_patches: HashMap::new(),
+                symbols: Vec::new(),
+                next_id: 0,
+                next_param_id: 0,
+                return_ty: TypeKind::Void,
+                implict_params: vec![],
+                compile: false,
+            });
+            self.functions.push(compiled_fn);
+        }
         for (name, ty) in func.params.iter() {
             self.define_parameter(name.clone(), ty.clone());
         }

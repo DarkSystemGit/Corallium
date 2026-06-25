@@ -22,6 +22,14 @@ impl Clock {
             .as_secs()
             - self.start) as i32
     }
+    fn read_ms(&self) -> i32 {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Couldn't get time")
+            .as_millis() as u64;
+        let start_ms = self.start * 1000;
+        (now_ms - start_ms) as i32
+    }
 }
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     match command {
@@ -33,6 +41,22 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     .push(DataType::Int32(clock.read()), &mut machine.core.srp);
                 if machine.debug {
                     println!("IO.clock.read");
+                }
+            } else {
+                machine
+                    .core
+                    .stack
+                    .push(DataType::Int32(0), &mut machine.core.srp);
+            }
+        }
+        1 => {
+            if let RawDevice::Clock(clock) = &machine.devices[device_id].contents {
+                machine
+                    .core
+                    .stack
+                    .push(DataType::Int32(clock.read_ms()), &mut machine.core.srp);
+                if machine.debug {
+                    println!("IO.clock.readMs");
                 }
             } else {
                 machine

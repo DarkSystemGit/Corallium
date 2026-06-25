@@ -6,3 +6,5 @@ fn frequency(channel: i16, newFrequency: f32) -> void {}
 fn masterVolume(newVolume: i32) -> void {}
 fn loadSound(channel: i16, sample: [f32], len: i32) -> void {}
 fn setLoop(channel: i16, enabled: bool) -> void {}
+fn schedule(channel: i16, time: i32, commandType: i16, value: f32) -> void {}
+fn masterClock() -> i32 {}

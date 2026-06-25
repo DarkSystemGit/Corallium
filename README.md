@@ -19,17 +19,6 @@ chmod +x ./install.sh && ./install.sh
 
 This script should work for both linux and MacOS, though Mac is untested, along with Windows. Read over the script carefully before running it.
 ### Run a Coral program
-
-```bash
-corallium run --file test/importTest.coral
-```
-
-Enable the runtime debugger:
-
-```bash
-corallium run --file test/importTest.coral --debug
-```
-
 Compile to a cartridge (`.cart`):
 
 ```bash
@@ -45,13 +34,87 @@ corallium compile --file test/importTest.coral --link path/to/file1 path/to/dir
 Run from a cartridge:
 
 ```bash
-corallium bytecode --file test/importTest.cart
+corallium run --file test/importTest.cart
+```
+Enable the runtime debugger:
+
+```bash
+corallium run --file test/importTest.cart --debug
 ```
 
 Show CLI help:
 
 ```bash
 corallium --help
+```
+
+### SDK file converters and binary formats
+
+#### MIDI -> `.csfx`
+
+```bash
+corallium sdk convert_music path/to/song.mid
+```
+
+Optional preview WAV:
+
+```bash
+corallium sdk convert_music path/to/song.mid --wav-preview
+```
+
+`convert_music` writes `path/to/song.csfx` with this exact layout:
+
+```
+CSFX FILE
++------------------------------+
+| Header (48 bytes total)      |
+| 8 channel records, each:     |
+|   pan        : f32 (4 bytes) |
+|   event_count: i16 (2 bytes) |
++------------------------------+
+| Event Body                   |
+| Channel 0 events             |
+| Channel 1 events             |
+| ...                          |
+| Channel 7 events             |
++------------------------------+
+```
+
+Each event entry is 10 bytes:
+
+```
++----------------------------+
+| timestamp_ms : i32 (4)     |
+| frequency_hz : f32 (4)     |
+| volume       : i16 (2)     |
++----------------------------+
+```
+
+All numeric fields are little-endian.
+
+#### Image -> `.cbmp`
+
+```bash
+corallium sdk convert_image path/to/image.png
+```
+
+`convert_image` writes `path/to/image.cbmp` with this exact layout:
+
+```
+CBMP FILE
++------------------------------+
+| width  : i16 (2 bytes)       |
+| height : i16 (2 bytes)       |
++------------------------------+
+| pixels : width*height*u32    |
+|          row-major order     |
++------------------------------+
+```
+
+Each pixel is one `u32` value stored little-endian, where the packed color is:
+
+```
+0xRRGGBBAA
 ```
 
 ## Coral language
@@ -76,12 +139,16 @@ fn main() -> void {
 }
 ```
 
+## Polyp assembly
+
+Polyp is the assembly language for Corallium. See `docs/polyp.md` for the syntax, instruction reference, and examples.
+
 ## Specs
 
 - Memory: 16 MiB base RAM, with stack-addressable memory above that range
 - Display: 320x240 framebuffer (scaled in a window)
 - Audio: 32 kHz output with built-in square/triangle/saw/sample channels
-- VM ISA: integer, float, extended 32-bit, stack, control-flow, call/return, and device I/O ops
+- ISA: integer, float, extended 32-bit, stack, control-flow, call/return, and device I/O ops
 
 Device I/O is invoked as `IO(device_id, command_id)`, with command arguments passed on the VM stack.
 
@@ -90,7 +157,7 @@ Device I/O is invoked as `IO(device_id, command_id)`, with command arguments pas
 | Device ID | Device | Command IDs |
 | --- | --- | --- |
 | `0` | Disk | `0=read`, `1=write`, `2=loadSectors` |
-| `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound`, `7=setLoop` |
+| `1` | Audio | `0=pause`, `1=unpause`, `2=volume`, `3=pan`, `4=frequency`, `5=masterVolume`, `6=loadSound`, `7=setLoop`, `8=schedule`, `9=masterClock` |
 | `2` | Clock | `0=read` |
 | `3` | Graphics | `0=registerAtlas`, `1=registerLayer`, `2=registerSprite`, `3=render`, `4=pullControls`, `5=setPixel`, `6=getPixel`, `7=removeSprite`, `8=removeLayer`, `9=registerBitmap`, `10=removeBitmap`, `11=deltaTime` |
 | `4` | Serial | `0=write (null-terminated string ptr)`, `1=writeNum (i32)` |
@@ -112,6 +179,7 @@ Graphics control mapping:
 
 - `src/compiler/` - Coral frontend, AST, IR generation, and backend lowering
 - `src/std/` - Coral standard libary
+- `src/assembler/` - Polyp frontend, AST, and Code Generation
 - `src/executable.rs` - bytecode/function packing, constants, disk image build
 - `src/vm.rs` - VM execution engine, stack/memory model, debug console
 - `src/devices/` - disk, audio, clock, graphics, and serial drivers
@@ -120,7 +188,7 @@ Graphics control mapping:
 
 You can run a demo game made for corralium in `demos/strider/strider.cart`. You can run: 
 ```bash
-corallium bytecode --file demos/strider/strider.cart
+corallium run --file demos/strider/strider.cart
 ```
 
 ## Credits

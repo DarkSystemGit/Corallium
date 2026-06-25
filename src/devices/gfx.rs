@@ -37,6 +37,8 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //  enum(&Matrix,&[Matrix],NULL) transformData
     //}
     //struct Bitmap{
+    //  i16 x
+    //  i16 y
     //  i16 length
     //  i16 width
     //  *[i32] data
@@ -486,13 +488,17 @@ fn load_layer(ptr: usize, machine: &mut Machine, device_id: usize, scanlines: us
 }
 fn load_bitmap(ptr: usize, machine: &mut Machine, device_id: usize) {
     //[Bitmap layout]
+    // i16 x
+    // i16 y
     // i16 length
     // i16 width
     // *[i32] data
-    let bitmap = machine.memory.read_range(ptr..ptr + 4, machine);
-    let length = usize::try_from(bitmap[0]).expect("Bitmap length must be non-negative");
-    let width = usize::try_from(bitmap[1]).expect("Bitmap width must be non-negative");
-    let data_ptr = convert_i16_to_u32(&bitmap[2..4]).expect("Couldn't get bitmap data") as usize;
+    let bitmap = machine.memory.read_range(ptr..ptr + 6, machine);
+    let x = bitmap[0] as i32;
+    let y = bitmap[1] as i32;
+    let length = usize::try_from(bitmap[2]).expect("Bitmap length must be non-negative");
+    let width = usize::try_from(bitmap[3]).expect("Bitmap width must be non-negative");
+    let data_ptr = convert_i16_to_u32(&bitmap[4..6]).expect("Couldn't get bitmap data") as usize;
     let pixel_count = width
         .checked_mul(length)
         .expect("Bitmap dimensions overflow");
@@ -505,7 +511,7 @@ fn load_bitmap(ptr: usize, machine: &mut Machine, device_id: usize) {
         .chunks(2)
         .map(|chunk| convert_i16_to_u32(chunk).expect("Couldn't convert i16 to color"))
         .collect::<Vec<u32>>();
-    get_gs(machine, device_id).add_bitmap(length, width, data);
+    get_gs(machine, device_id).add_bitmap(x, y, length, width, data);
 }
 #[derive(Debug)]
 struct BGLayer {
@@ -575,6 +581,8 @@ pub struct GraphicsSystem {
 }
 #[derive(Debug, Clone)]
 struct RegisteredBitmap {
+    x: i32,
+    y: i32,
     length: usize,
     width: usize,
     data: Vec<u32>,
@@ -682,8 +690,10 @@ impl GraphicsSystem {
     pub fn clear_bitmaps(&mut self) {
         self.bitmaps.clear();
     }
-    pub fn add_bitmap(&mut self, length: usize, width: usize, data: Vec<u32>) {
+    pub fn add_bitmap(&mut self, x: i32, y: i32, length: usize, width: usize, data: Vec<u32>) {
         self.bitmaps.push(RegisteredBitmap {
+            x,
+            y,
             length,
             width,
             data,
@@ -743,18 +753,24 @@ impl GraphicsSystem {
             }
         }
         for bitmap in &self.bitmaps {
-            let copy_height = bitmap.length.min(self.display.height);
-            let copy_width = bitmap.width.min(self.display.width);
-            for y in 0..copy_height {
-                let src_row_start = y * bitmap.width;
-                let dst_row_start = y * self.display.width;
-                for x in 0..copy_width {
-                    let bitmap_pixel = bitmap.data[src_row_start + x];
+            for src_y in 0..bitmap.length {
+                let dst_y = bitmap.y + src_y as i32;
+                if dst_y < 0 || dst_y >= self.display.height as i32 {
+                    continue;
+                }
+                let src_row_start = src_y * bitmap.width;
+                let dst_row_start = dst_y as usize * self.display.width;
+                for src_x in 0..bitmap.width {
+                    let dst_x = bitmap.x + src_x as i32;
+                    if dst_x < 0 || dst_x >= self.display.width as i32 {
+                        continue;
+                    }
+                    let bitmap_pixel = bitmap.data[src_row_start + src_x];
                     let alpha = bitmap_pixel & 0xff;
                     if alpha == 0 {
                         continue;
                     }
-                    let dst_idx = dst_row_start + x;
+                    let dst_idx = dst_row_start + dst_x as usize;
                     if alpha == 255 {
                         self.display.buffer[dst_idx] = bitmap_pixel;
                         continue;

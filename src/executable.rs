@@ -13,7 +13,7 @@ use std::io;
 use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Library {
-    name: String,
+    pub name: String,
     fns: Vec<Fn>,
     pub constants: Vec<Vec<Data>>,
 }

@@ -1,0 +1,112 @@
+import "audio.h";
+import "fs.coral";
+import "mem.coral";
+import "conv.coral";
+import "serial.h";
+struct SfxInfo{
+    events: i32,
+    len: i32
+}
+fn empty_song() -> fs::FileBuf{
+    return fs::FileBuf {
+            id: -1,
+            offset: 0 as i32,
+            len: 0 as i32,
+            buf_offset: 0 as i32,
+            buf_len: 0 as i32,
+            buf: 0 as &void
+        };
+
+}
+
+fn read_f32(words: [i16], word_offset: i32) -> f32 {
+    let out: [f32; 1] = [0.0; 1];
+    let raw: [i16; 2] = [words[word_offset], words[word_offset + (1 as i32)]];
+    mem::copy(raw as &void, out as &void, 2 as i32, 0 as i32);
+    return out[0];
+}
+
+
+
+fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo {
+
+    let base: i32 = match start_frame {
+        Some(v) -> v,
+        None -> audio::masterClock()
+    };
+    let words: [i16] = file.buf as [i16];
+    let cursor: i32 = 24 as i32;
+    let info: SfxInfo = SfxInfo{
+        events: 0 as i32,
+        len: 0 as i32
+    };
+
+    for (let ch: i16 = 0; ch < 8; ch = ch + 1) {
+        let header: i32 = (ch as i32) * (3 as i32);
+        if ((header + (3 as i32)) > file.buf_len) {
+            return info;
+        };
+
+        let pan: f32 = read_f32(words, header);
+        let count_raw: i16 = words[header + (2 as i32)];
+        let count: i32 = match count_raw < 0 {
+            true -> 0 as i32,
+            _ -> count_raw as i32
+        };
+
+        audio::schedule(ch, base, 0, pan);
+        audio::schedule(ch, base, 1, 0.0);
+        audio::schedule(ch, base, 2, 0.0);
+        info.events = info.events + (3 as i32);
+
+        for (let ev: i32 = 0 as i32; ev < count; ev = ev + (1 as i32)) {
+            let off: i32 = cursor + (ev * (5 as i32));
+            if ((off + (5 as i32)) > file.buf_len) {
+                return info;
+            };
+
+            let timestamp_ms: i32 = conv::i32_from_i16_parts(words[off], words[off + (1 as i32)]);
+            let freq: f32 = read_f32(words, off + (2 as i32));
+            let vol_i16: i16 = words[off + (4 as i32)];
+            let vol_raw: i32 = vol_i16 as i32;
+            let vol_clamped: i32 = match vol_raw < (0 as i32) {
+                true -> 0 as i32,
+                _ -> match vol_raw > (32767 as i32) {
+                    true -> 32767 as i32,
+                    _ -> vol_raw
+                }
+            };
+            let at: i32 = base + (timestamp_ms * (32 as i32));
+            let vol: f32 = (vol_clamped as f32) * (10.0 / 32767.0);
+
+            audio::schedule(ch, at, 2, freq);
+            audio::schedule(ch, at, 1, vol);
+            info.events = info.events + (2 as i32);
+            if (timestamp_ms > info.len) {
+                info.len = timestamp_ms;
+            };
+        };
+        cursor = cursor + (count * (5 as i32));
+    };
+
+    return info;
+}
+
+fn play_now(file: fs::FileBuf) -> SfxInfo {
+    return play(file, None);
+}
+
+fn stop() -> void {
+    let now: i32 = audio::masterClock();
+    for (let ch: i16 = 0; ch < 8; ch = ch + 1) {
+        audio::schedule(ch, now, 1, 0.0);
+    };
+    return;
+}
+
+fn free(file: fs::FileBuf) -> void {
+    if (file.id >= 0) {
+        fs::closeFile(file);
+    };
+    return;
+}

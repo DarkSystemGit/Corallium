@@ -26,6 +26,9 @@ struct Layer {
     loc: [i32;2]?
 }
 struct Bitmap {
+    x: i16,
+    y: i16,
+    priority: i16,
     length: i16,
     width: i16,
     data: [i32],

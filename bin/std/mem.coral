@@ -116,18 +116,18 @@ fn free(ptr: &void)->void{
     return;
 }
 fn copy(buf1: &void, buf2: &void, len: i32, offset: i32)->void{
+    let arr1: [i16]=(buf1 as [i16]);
+    let arr2: [i16]=(buf2 as [i16]);
     for (let i: i32 = 0; i<len; i = i+(1 as i32)){
-        let arr1: [i16]=(buf1 as [i16]);
-        let arr2: [i16]=(buf2 as [i16]);
         arr2[i+offset]=arr1[i];
     };
     return;
 }
 fn compare(buf1: &void, buf2: &void, len: i32)->bool{
     let same: bool=true;
+    let arr1: [i16]=(buf1 as [i16]);
+    let arr2: [i16]=(buf2 as [i16]);
     for (let i: i32 =0; i<len; i = i+(1 as i32)){
-        let arr1: [i16]=(buf1 as [i16]);
-        let arr2: [i16]=(buf2 as [i16]);
         arr2[i]==arr1[i];
         let matches: bool=arr2[i]==arr1[i];
         same=same and matches;

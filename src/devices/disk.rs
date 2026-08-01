@@ -118,6 +118,33 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 println!("IO.disk.sectorCount -> {}", count);
             }
         }
+        4 => {
+            //loadSector(sec,offset,dest)->i32 len
+            let cargs = pop_stack(&mut machine.core, 3)
+                .iter()
+                .map(|i| *i as usize)
+                .collect::<Vec<usize>>();
+            let mut next_mem = cargs[2];
+            let mut written_len = 0;
+            //dbg!(&cargs);
+            for (j, byte) in disk[cargs[0]].data.iter().enumerate() {
+                if (j >= cargs[1]) {
+                    machine.memory.write(next_mem, *byte, &mut machine.core);
+                    next_mem += 1;
+                    written_len += 1;
+                }
+            }
+            machine.core.stack.push(
+                crate::vm::DataType::Int32(written_len),
+                &mut machine.core.srp,
+            );
+            if machine.debug {
+                println!(
+                    "IO.disk.loadSector disk.%[{}:{}]->%{}",
+                    cargs[0], cargs[1], cargs[2]
+                );
+            }
+        }
         _ => {}
     }
 }

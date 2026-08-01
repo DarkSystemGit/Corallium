@@ -1,0 +1,300 @@
+import <fs>;
+import <serial>;
+import <gfx>;
+import <audio>;
+import <clock>;
+import <mem>;
+import <cbmp>;
+import <sfx>;
+fn main()->void{
+    let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
+    fs::readFile(boot_screen_file,0 as i32,None);
+    let bitmap: gfx::Bitmap=gfx::Bitmap{
+        x: 0,
+        y: 0,
+        priority: 0,
+        width: 320,
+        length: 240,
+        data: boot_screen_file.buf as [i32]
+    };
+    let startup: fs::FileBuf=fs::openFile("linked/startup.raw");
+    fs::readFile(startup, 0 as i32, None);
+    audio::loadSound(9,startup.buf as [f32],(startup.len));
+    fs::closeFile(startup);
+    gfx::registerBitmap(bitmap);
+    for(let i: i16=0;i<75;i=i+1){
+        gfx::render();
+    };
+    gfx::removeBitmap(bitmap);
+    fs::closeFile(boot_screen_file);
+    let theme_file: fs::FileBuf=fs::openFile("linked/pong.csfx");
+    fs::readFile(theme_file,0 as i32,None);
+    audio::masterVolume(2 as i32);
+    let theme_sfx: sfx::SfxInfo = sfx::play(theme_file, None);
+    let title_file: fs::FileBuf=fs::openFile("linked/title.cbmp");
+    fs::readFile(title_file,0 as i32,None);
+    let title_screen: gfx::Bitmap = cbmp::from_file(title_file);
+    title_screen.priority=1;
+    gfx::registerBitmap(title_screen);
+    let atlas_file: fs::FileBuf=fs::openFile("linked/atlas.cbmp");
+    fs::readFile(atlas_file,0 as i32,None);
+    let source: gfx::Bitmap = cbmp::from_file(atlas_file);
+    let atlas: [i16] = cbmp::bitmap_to_atlas(source, 90, 0, 0);
+    gfx::registerAtlas(atlas);
+    let paddleTm: [i16] = [86;6];
+    let bgTm: [i16] = [87;30];
+    let uiTm: [i16] = [0;20];
+    updateScore(0,0,uiTm);
+    let background: gfx::Layer = gfx::Layer{
+        id: 0,
+        x: 156,
+        y: 0,
+        tilemap_width: 1,
+        tilemap_height: 30,
+        tilemap: bgTm,
+        transform: gfx::Transform::Flat,
+        transformInfo: None,
+        loc: None
+    };
+    let ui: gfx::Layer = gfx::Layer{
+        id: 1,
+        x: 0,
+        y: 0,
+        tilemap_width: 20,
+        tilemap_height: 1,
+        tilemap: uiTm,
+        transform: gfx::Transform::SingleMatrixAffine,
+        transformInfo: Some([
+        2.0,0.0,
+        0.0,2.0,
+        ]),
+        loc: Some([80 as i32,60 as i32])
+    };
+    gfx::registerLayer(background);
+    gfx::registerLayer(ui);
+    let paddleA: gfx::Sprite = gfx::Sprite{
+        id: 0,
+        x: 8,
+        y: 32,
+        tilemap_width: 1,
+        tilemap_height: 6,
+        tilemap: paddleTm,
+        priority:1,
+        scale_x:0.0,
+        scale_y:0.0,
+    };
+    let paddleB: gfx::Sprite = gfx::Sprite{
+        id: 1,
+        x: 304,
+        y: 160,
+        tilemap_width: 1,
+        tilemap_height: 6,
+        tilemap: paddleTm,
+        priority:1,
+        scale_x:0.0,
+        scale_y:0.0,
+    };
+    let ball: gfx::Sprite = gfx::Sprite{
+        id: 2,
+        x: 152,
+        y: 112,
+        tilemap_width: 1,
+        tilemap_height: 1,
+        tilemap: [88;1],
+        priority:0,
+        scale_x:2.0,
+        scale_y:2.0,
+    };
+    gfx::registerSprite(paddleA);
+    gfx::registerSprite(paddleB);
+    gfx::registerSprite(ball);
+    while(true){
+        if(sfx::done(theme_sfx)){
+            theme_sfx=sfx::play(theme_file, None);
+        };
+        let controls: [bool;11]=[false;11];
+        gfx::pullControls(controls);
+        if(controls[gfx::Control::Start]){
+            break;
+        };
+        gfx::render();
+    };
+    gfx::removeBitmap(title_screen);
+    fs::closeFile(title_file);
+    let rand_seed: &i32=init_rand();
+    let scoreA: i16=0;
+    let scoreB: i16=0;
+    let ballVelX: f32=1.0;
+    let ballVelY: f32=1.0;
+    let trueBallX: f32=ball.x as f32;
+    let trueBallY: f32=ball.y as f32;
+    while(true){
+        if(sfx::done(theme_sfx)){
+            theme_sfx=sfx::play(theme_file, None);
+        };
+        let controls: [bool;11]=[false;11];
+        gfx::pullControls(controls);
+        if(controls[gfx::Control::Down]){
+            paddleA.y=paddleA.y+2;
+        };
+        if(controls[gfx::Control::Up]){
+            paddleA.y=paddleA.y-2;
+        };
+        if(clock::read()%(3 as i32)==(0 as i32)){
+        let aiJitter: f32=(random(rand_seed,-1000,1000) as f32)/100.0;
+        let aiOffset: f32=(paddleB.y+24) as f32;
+        aiOffset=aiOffset+aiJitter;
+        if((trueBallY-aiOffset)<0.0){
+            if(trueBallX>160.0){
+                paddleB.y=paddleB.y-1;
+            }else{
+                if(clock::read()%(5 as i32)==(2 as i32)){
+                paddleB.y=paddleB.y+1;};
+            };
+        };
+        if((trueBallY-aiOffset)>0.0){
+            if(trueBallX>160.0){
+                paddleB.y=paddleB.y+1;
+            }else{
+                if(clock::read()%(5 as i32)==(2 as i32)){
+                paddleB.y=paddleB.y-1;};
+            };
+        };};
+        if(paddleA.y<0){
+            paddleA.y=0;
+        };
+        if(paddleA.y>192){
+            paddleA.y=192;
+        };
+        if(paddleB.y<0){
+            paddleB.y=0;
+        };
+        if(paddleB.y>192){
+            paddleB.y=192;
+        };
+        updateScore(scoreA,scoreB,uiTm);
+        trueBallX=trueBallX+ballVelX;
+        trueBallY=trueBallY+ballVelY;
+        if (trueBallY<=0.0 or trueBallY>=224.0){
+            ballVelY=-ballVelY;
+            if(trueBallY<=0.0){
+                trueBallY=0.0;
+            }else{
+                trueBallY=224.0;
+            };
+        };
+        if(trueBallX<=14.0 and trueBallY>=(paddleA.y as f32) and trueBallY<=((paddleA.y as f32)+48.0)){
+            ballVelX=ballVelX*(1.0+((random(rand_seed,0,10) as f32)/100.0))*(-1.0);
+            trueBallX=14.0;
+        };
+        if(trueBallX>=296.0 and trueBallY>=(paddleB.y as f32) and trueBallY<=((paddleB.y as f32)+48.0)){
+            ballVelX=ballVelX*(1.0+((random(rand_seed,0,10) as f32)/100.0))*(-1.0);
+            trueBallX=296.0;
+        };
+        ball.x=trueBallX as i16;
+        ball.y=trueBallY as i16;
+        if(trueBallX<=0.0){
+            scoreB=scoreB+1;
+            trueBallX=152.0;
+            trueBallY=112.0;
+            ballVelX=-ballVelX*1.05*(random(rand_seed,-15,15) as f32)/15.0;
+            if(ballVelX<0.5 and ballVelX>-0.5){
+                ballVelX=ballVelX*3.0;
+            };
+            ballVelY=-ballVelY*1.05*(random(rand_seed,-15,15) as f32)/15.0;
+            if(ballVelY<0.5 and ballVelY>-0.5){
+                ballVelY=ballVelY*3.0;
+            };
+        };
+        if(trueBallX>=320.0){
+            scoreA=scoreA+1;
+            trueBallX=152.0;
+            trueBallY=112.0;
+            ballVelX=-ballVelX*1.05*(random(rand_seed,-15,15) as f32)/15.0;
+            if(ballVelX<0.5 and ballVelX>-0.5){
+                ballVelX=ballVelX*3.0;
+            };
+            ballVelY=-ballVelY*1.05*(random(rand_seed,-15,15) as f32)/15.0;
+            if(ballVelY<0.5 and ballVelY>-0.5){
+                ballVelY=ballVelY*3.0;
+            };
+        };
+        gfx::render();
+        if(scoreA==10 or scoreB==10){
+            break;
+        };
+    };
+    if(scoreA==10){
+        let win_file: fs::FileBuf=fs::openFile("linked/win.cbmp");
+        fs::readFile(win_file,0 as i32,None);
+        let win_screen: gfx::Bitmap = cbmp::from_file(win_file);
+        win_screen.priority=1;
+        gfx::registerBitmap(win_screen);
+        while(true){
+            let controls: [bool;11]=[false;11];
+            gfx::pullControls(controls);
+            if(controls[gfx::Control::Start]){
+                break;
+            };
+            gfx::render();
+        };
+        fs::closeFile(win_file);
+    }else{
+        let lose_file: fs::FileBuf=fs::openFile("linked/gameover.cbmp");
+        fs::readFile(lose_file,0 as i32,None);
+        let lose_screen: gfx::Bitmap = cbmp::from_file(lose_file);
+        lose_screen.priority=1;
+        gfx::registerBitmap(lose_screen);
+        while(true){
+            let controls: [bool;11]=[false;11];
+            gfx::pullControls(controls);
+            if(controls[gfx::Control::Start]){
+                break;
+            };
+            gfx::render();
+        };
+        fs::closeFile(lose_file);
+    };
+    return;
+}
+fn convertNumToTiles(num: i16,digits: [i16],len: i16)->void{
+    let i: i16=len-1;
+    while(num>0 or i!=-1){
+        digits[i]=(num%10)+54;
+        num=num/10;
+        i=i-1;
+    };
+    return;
+}
+fn updateScore(scoreA: i16,scoreB: i16,uiTm: [i16])->void{
+    let digitsA: [i16] = [0;2];
+    convertNumToTiles(scoreA,digitsA,2);
+    uiTm[4]=digitsA[0];
+    uiTm[5]=digitsA[1];
+    let digitsB: [i16] = [0;2];
+    convertNumToTiles(scoreB,digitsB,2);
+    uiTm[14]=digitsB[0];
+    uiTm[15]=digitsB[1];
+    return;
+}
+fn init_rand() -> &i32 {
+    let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
+    seed_ptr[0]=clock::read()+(1 as i32);
+    return seed_ptr as &i32;
+}
+fn random(seed_ptr: &i32, start: i16, end: i16) -> i16 {
+    let seed: [i32] = seed_ptr as [i32];
+    let state: i32 = seed[0] % (32768 as i32);
+    if (state < (0 as i32)) {
+        state = state + (32768 as i32);
+    };
+    let next_state: i32 =
+        ((state * (25173 as i32)) + (13849 as i32)) % (32768 as i32);
+    let n: i16 = next_state as i16;
+    seed[0] = next_state;
+    let range: i16 = end - start + (1 as i16);
+    if (range <= 0 as i16) {
+        return start;
+    };
+    return start + (n % range);
+}

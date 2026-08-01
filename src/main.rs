@@ -1,3 +1,4 @@
+#![allow(warnings)]
 mod assembler;
 mod compiler;
 mod devices;
@@ -31,7 +32,9 @@ fn help() {
     println!(
         "  compile --file <path.coral> [--debug] [--link <file_or_dir1> <file_or_dir2> ...] [--std <location to stdlib>]"
     );
-    println!("  assemble --file <path.polyp> [--debug] [--link <file_or_dir1> <file_or_dir2> ...]");
+    println!(
+        "  assemble --file <path.polyp> [--debug] [--lib] [--link <file_or_dir1> <file_or_dir2> ...]"
+    );
     println!("  run --file <path.cart> [--debug]");
     println!("  sdk");
     println!("      convert_music <input_midi_file> [--wav-preview]");
@@ -95,36 +98,106 @@ fn linked_files_from_args(args: &[String]) -> Vec<String> {
     }
 }
 
+fn linked_file_record(name: &str, file_data: Vec<i16>, id: i16) -> DiskSection {
+    let len_i32 = i32::try_from(file_data.len()).expect("Linked file too large");
+    let name = name
+        .as_bytes()
+        .iter()
+        .map(|b| *b as i16)
+        .collect::<Vec<i16>>();
+    let data = vec![
+        vec![name.len() as i16],
+        name,
+        convert_i32_to_i16(len_i32).to_vec(),
+        file_data,
+    ]
+    .concat();
+
+    DiskSection {
+        section_type: DiskSectionType::Data,
+        id,
+        data,
+    }
+}
+
+fn read_linked_file_words(path: &str) -> Vec<i16> {
+    fs::read(path)
+        .expect(&format!("Failed to read linked file: {}", path))
+        .chunks(2)
+        .map(|chunk| {
+            let lo = chunk[0];
+            let hi = if chunk.len() == 2 { chunk[1] } else { 0 };
+            i16::from_le_bytes([lo, hi])
+        })
+        .collect()
+}
+
+fn child_linked_file_start(child_disk: &Disk) -> usize {
+    let Some(entrypoint) = child_disk.first() else {
+        return 0;
+    };
+
+    let header_word =
+        |addr: usize| -> usize { entrypoint.data.get(addr).copied().unwrap_or(0).max(0) as usize };
+
+    (header_word(513) + header_word(515) + header_word(517)).max(1)
+}
+
+fn append_linked_cart(path: &str, disk: &mut Disk) {
+    let mut child_disk = load_disk(path).expect(&format!("Failed to read linked cart: {}", path));
+    if child_disk.is_empty() {
+        panic!("Linked cart has no disk sections: {}", path);
+    }
+
+    let first_physical_sector = disk.len();
+
+    // Update the child's LSO header field (index 518) to the physical sector offset
+    if child_disk[0].data.len() > 518 {
+        child_disk[0].data[518] = first_physical_sector as i16;
+        let fcso = 3 + path.len();
+        //dbg!(fcso);
+        child_disk[0].data[519] = convert_i32_to_i16(fcso as i32)[0];
+        child_disk[0].data[520] = convert_i32_to_i16(fcso as i32)[1];
+    }
+
+    disk.push(linked_file_record(
+        path,
+        child_disk[0].data.clone(),
+        first_physical_sector as i16,
+    ));
+
+    let linked_file_start = child_linked_file_start(&child_disk);
+    for (logical_sector, section) in child_disk.into_iter().enumerate().skip(1) {
+        let mut section = section;
+        section.id = disk.len() as i16;
+        if logical_sector < linked_file_start {
+            section.section_type = DiskSectionType::Code;
+        }
+        disk.push(DiskSection {
+            section_type: section.section_type,
+            id: section.id,
+            data: section.data,
+        });
+    }
+}
+
+fn append_linked_data_file(path: &str, disk: &mut Disk) {
+    let id = disk.len() as i16;
+    disk.push(linked_file_record(path, read_linked_file_words(path), id));
+}
+
 fn append_linked_files(args: &[String], disk: &mut Disk) {
     for linked_file in linked_files_from_args(args) {
-        let file_data: Vec<i16> = fs::read(&linked_file)
-            .expect(&format!("Failed to read linked file: {}", &linked_file))
-            .chunks(2)
-            .map(|chunk| {
-                let lo = chunk[0];
-                let hi = if chunk.len() == 2 { chunk[1] } else { 0 };
-                i16::from_le_bytes([lo, hi])
-            })
-            .collect();
-        let len = file_data.len();
-        let len_i32 = i32::try_from(len).expect("Linked file too large");
-        let name: Vec<i16> = linked_file
-            .into_bytes()
-            .into_iter()
-            .map(|b| b as i16)
-            .collect();
-        let data = vec![
-            vec![name.len() as i16],
-            name,
-            convert_i32_to_i16(len_i32).to_vec(),
-            file_data,
-        ]
-        .concat();
-        disk.push(DiskSection {
-            section_type: DiskSectionType::Data,
-            id: disk.len() as i16,
-            data,
-        });
+        let path = Path::new(&linked_file);
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cart"))
+        {
+            append_linked_cart(&linked_file, disk);
+        } else {
+            append_linked_data_file(&linked_file, disk);
+        }
     }
 }
 

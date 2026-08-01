@@ -28,6 +28,7 @@ struct Layer {
 struct Bitmap {
     x: i16,
     y: i16,
+    priority: i16,
     length: i16,
     width: i16,
     data: [i32],
@@ -44,3 +45,6 @@ fn setPixel(x: i16, y: i16, color: i32) -> void {}
 fn getPixel(x: i16, y: i16) -> i32 {}
 fn registerBitmap(bitmap: Bitmap) -> void {}
 fn removeBitmap(bitmap: Bitmap) -> void {}
+enum Control {
+    A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger
+}

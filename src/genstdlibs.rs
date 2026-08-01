@@ -11,6 +11,7 @@ const EXEC_HEADER_BASE_ADDR: i16 = 512;
 const EXEC_BASE_SECTOR_ADDR: i16 = EXEC_HEADER_BASE_ADDR + 1;
 const EXEC_CODE_SECTOR_COUNT_ADDR: i16 = EXEC_HEADER_BASE_ADDR + 3;
 const EXEC_DATA_SECTOR_COUNT_ADDR: i16 = EXEC_HEADER_BASE_ADDR + 5;
+const EXEC_LSO_ADDR: i16 = EXEC_HEADER_BASE_ADDR + 6;
 pub fn gen_libs() {
     gen_gfx().expect("Failed to generate gfx stdlib");
     gen_audio().expect("Failed to generate audio stdlib");
@@ -342,6 +343,67 @@ fn gen_audio() -> io::Result<()> {
         ]],
     ));
 
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "scheduleWithId".to_string(),
+        vec![1, 2, 1, 2, 2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(4),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(2),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(3),
+            Bytecode::Command(CommandType::Loadf),  Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::Pushf),  Bytecode::Register(CommandType::F1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(10),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "deschedule".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(11),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "nextScheduleId".to_string(),
+        vec![],
+        vec![vec![
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID), Bytecode::Int(12),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),               Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    audio.add_fn(Fn::new_with_blocks(
+        "scheduleDone".to_string(),
+        vec![2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(AUDIO_DEVICE_ID),       Bytecode::Int(13),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
     let out = Path::new("src/std/audio.bin");
     if let Some(parent) = out.parent() {
         fs::create_dir_all(parent)?;
@@ -445,6 +507,8 @@ fn gen_disk() -> io::Result<()> {
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
             Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Int(EXEC_LSO_ADDR),         Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Add),    Bytecode::Register(CommandType::R1),  Bytecode::Register(CommandType::R2),
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(DISK_DEVICE_ID),        Bytecode::Int(0),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
@@ -467,6 +531,8 @@ fn gen_disk() -> io::Result<()> {
             Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
             Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Int(EXEC_LSO_ADDR),         Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Add),    Bytecode::Register(CommandType::R1),  Bytecode::Register(CommandType::R2),
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(DISK_DEVICE_ID),        Bytecode::Int(1),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
@@ -486,9 +552,32 @@ fn gen_disk() -> io::Result<()> {
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
             Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Int(EXEC_LSO_ADDR),         Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Add),    Bytecode::Register(CommandType::R1),  Bytecode::Register(CommandType::R2),
             Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
             Bytecode::Command(CommandType::IO),     Bytecode::Int(DISK_DEVICE_ID),        Bytecode::Int(2),
             Bytecode::Command(CommandType::Return), Bytecode::Int(0),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+        ]],
+    ));
+
+    #[rustfmt::skip]
+    disk.add_fn(Fn::new_with_blocks(
+        "loadSector".to_string(),
+        vec![1, 2, 2],
+        vec![vec![
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(2),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(1),
+            Bytecode::Command(CommandType::LoadEx), Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::PushEx), Bytecode::Register(CommandType::EX1),
+            Bytecode::Command(CommandType::AddEx),  Bytecode::Register(CommandType::ARP), Bytecode::Argument(0),
+            Bytecode::Command(CommandType::Load),   Bytecode::Register(CommandType::EX1), Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Int(EXEC_LSO_ADDR),         Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Add),    Bytecode::Register(CommandType::R1),  Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(DISK_DEVICE_ID),        Bytecode::Int(4),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(2),                     Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));
 
@@ -511,8 +600,12 @@ fn gen_disk() -> io::Result<()> {
         "sectorCount".to_string(),
         vec![],
         vec![vec![
-            Bytecode::Command(CommandType::IO),Bytecode::Int(DISK_DEVICE_ID),Bytecode::Int(3),
-            Bytecode::Command(CommandType::Return), Bytecode::Int(1),Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
+            Bytecode::Command(CommandType::IO),     Bytecode::Int(DISK_DEVICE_ID), Bytecode::Int(3),
+            Bytecode::Command(CommandType::Pop),    Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Load),   Bytecode::Int(EXEC_LSO_ADDR),  Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Sub),    Bytecode::Register(CommandType::R1), Bytecode::Register(CommandType::R2),
+            Bytecode::Command(CommandType::Push),   Bytecode::Register(CommandType::R1),
+            Bytecode::Command(CommandType::Return), Bytecode::Int(1),              Bytecode::SymbolSectionLen(), Bytecode::ArgCount(),
         ]],
     ));
 

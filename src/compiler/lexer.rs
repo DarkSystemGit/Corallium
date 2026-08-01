@@ -109,7 +109,11 @@ impl Lexer {
                     Token::new(TokenKind::Operator(OperatorKind::Not), start, start + 1)
                 }
             }
-
+            '~' => Token::new(
+                TokenKind::Operator(OperatorKind::BitwiseNot),
+                start,
+                start + 1,
+            ),
             '>' => {
                 if self.input.matchTk('=') {
                     Token::new(TokenKind::Operator(OperatorKind::Gte), start, start + 2)
@@ -379,6 +383,7 @@ fn get_keyword(ident: &String) -> Option<KeywordKind> {
         "catch" => Some(KeywordKind::Catch),
         "Some" => Some(KeywordKind::Some),
         "None" => Some(KeywordKind::None),
+        "breakpoint" => Some(KeywordKind::Breakpoint),
         _ => None,
     }
 }
@@ -554,6 +559,7 @@ pub enum KeywordKind {
     Catch,
     None,
     Some,
+    Breakpoint,
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OperatorKind {
@@ -571,6 +577,7 @@ pub enum OperatorKind {
     Ampersand,
     Or,
     Not,
+    BitwiseNot,
     Xor,
     Shl,
     Shr,

@@ -49,12 +49,12 @@ struct Buffer{
 }
 
 fn main()->void{
-
     let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
     fs::readFile(boot_screen_file,0 as i32,None);
     let bitmap: gfx::Bitmap=gfx::Bitmap{
         x: 0,
         y: 0,
+        priority: 1,
         width: 320,
         length: 240,
         data: boot_screen_file.buf as [i32]

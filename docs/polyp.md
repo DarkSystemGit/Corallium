@@ -270,7 +270,7 @@ Unsigned variants write to `r1` or `ex1`:
 | `6` | `getPixel(x: i16, y: i16) -> i32` | `y, x` | pushes `i32` | Reads framebuffer pixel. |
 | `7` | `removeSprite(spritePtr: i32)` | `spritePtr` | — | Stops rendering a sprite pointer. |
 | `8` | `removeLayer(layerPtr: i32)` | `layerPtr` | — | Stops rendering a layer pointer. |
-| `9` | `registerBitmap(bitmapPtr: i32)` | `bitmapPtr` | — | Adds a bitmap pointer. |
+| `9` | `registerBitmap(bitmapPtr: i32)` | `bitmapPtr` | — | Adds a bitmap pointer. Negative bitmap priority draws below sprites; non-negative draws above. |
 | `10` | `removeBitmap(bitmapPtr: i32)` | `bitmapPtr` | — | Stops rendering a bitmap pointer. |
 | `11` | `deltaTime() -> i32` | — | pushes `i32` | Milliseconds since last frame. |
 
@@ -304,6 +304,9 @@ Layer:
   i32 loc_opt_ptr         // pointer to option payload
 
 Bitmap:
+  i16 x
+  i16 y
+  i16 priority
   i16 length
   i16 width
   i32 data_ptr            // pointer to [i32] pixels (RGBA)

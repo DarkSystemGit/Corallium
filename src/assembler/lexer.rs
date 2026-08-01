@@ -360,6 +360,9 @@ fn getKeyword(str: &String) -> TokenKind {
         "shrEx" => TokenKind::Command(CommandType::ShrEx),
         // IO
         "io" => TokenKind::Command(CommandType::IO),
+        //breakpoint
+        "breakpoint" => TokenKind::Command(CommandType::Breakpoint),
+        "_HEAP_START_" => TokenKind::HeapStart,
         _ => TokenKind::None,
     }
 }
@@ -451,6 +454,7 @@ impl Token {
 pub enum TokenKind {
     Command(CommandType),
     Register(RegisterType),
+    HeapStart,
     Import,
     Symbol,
     Fn,

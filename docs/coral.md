@@ -304,6 +304,10 @@ If the value must outlive the function return, allocate backing storage (for exa
 | `fn loadSound(channel: i16, sample: [f32], len: i32) -> void` | Load sample data into a channel. |
 | `fn setLoop(channel: i16, enabled: bool) -> void` | Enable or disable looping for a sample channel. |
 | `fn schedule(channel: i16, time: i32, commandType: i16, value: f32) -> void` | Schedule a channel change at a specific audio master clock sample index. |
+| `fn scheduleWithId(channel: i16, time: i32, commandType: i16, value: f32, scheduleId: i32) -> void` | Schedule a tagged channel change that can be canceled later by ID. |
+| `fn deschedule(scheduleId: i32) -> void` | Cancel all not-yet-applied scheduled updates matching `scheduleId`. |
+| `fn nextScheduleId() -> i32` | Get a runtime-generated unique schedule ID. |
+| `fn scheduleDone(scheduleId: i32) -> i32` | Returns `1` when no pending updates remain for `scheduleId`, otherwise `0`. |
 | `fn masterClock() -> i32` | Read the current audio master clock sample index. |
 
 #### How audio works
@@ -352,6 +356,10 @@ Sample channels play loaded sound data:
 
 - `masterClock()` returns the current audio master clock sample index.
 - `schedule(channel, time, commandType, value)` queues a change at an absolute master clock **sample** index (0-based).
+- `nextScheduleId()` allocates a runtime-managed ID that can tag related scheduled updates.
+- `scheduleWithId(...)` is the tagged variant of `schedule(...)`.
+- `deschedule(id)` removes pending scheduled updates with the same ID.
+- `scheduleDone(id)` returns `1` when all updates for `id` have been applied (or descheduled), else `0`.
 - `commandType` values: `0=pan`, `1=volume`, `2=frequency`, `3=loop`.
 - `pan` uses a `value` in `-1.0..1.0` (left=-1, right=1).
 - `loop` treats `value != 0.0` as enabled.
@@ -378,6 +386,25 @@ fn main() -> void {
     return;
 }
 ```
+
+### `sfx` (`src/std/sfx.coral`)
+
+High-level `.csfx` playback helpers built on `audio`.
+
+| Function | Description |
+| --- | --- |
+| `fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo` | Play a `.csfx` file once, optionally at an absolute master clock sample index. |
+| `fn stop_sfx(info: SfxInfo) -> void` | Cancel all pending scheduled updates tagged with `info.id`. |
+| `fn done(info: SfxInfo) -> bool` | True when all updates for this play instance have been consumed or canceled. |
+
+`SfxInfo` fields:
+- `id`: runtime schedule ID for this play instance
+- `events`: number of scheduled updates emitted
+- `len`: song length in milliseconds
+
+Notes:
+- `stop_sfx(info)` only deschedules updates for that instance, so other sounds keep playing.
+- `done(info)` uses `audio::scheduleDone(info.id)` to report completion for that specific scheduled instance.
 
 ### `disk` (`src/std/disk.h`)
 
@@ -415,6 +442,9 @@ fn main() -> void {
   - `transformInfo: [f32]?`
   - `loc: [i32;2]?` (camera center for affine transforms)
 - `struct Bitmap`
+  - `x: i16`
+  - `y: i16`
+  - `priority: i16`
   - `length: i16`
   - `width: i16`
   - `data: [i32]`
@@ -433,7 +463,7 @@ fn main() -> void {
 | `fn pullControls(writeLoc: [bool; 11]) -> void` | Read controller state into a bool array, order [A,B,X,Y,Left,Right,Up,Down,Start,LTrigger,RTrigger] |
 | `fn setPixel(x: i16, y: i16, color: i32) -> void` | Set a pixel color. |
 | `fn getPixel(x: i16, y: i16) -> i32` | Read a pixel color. |
-| `fn registerBitmap(bitmap: Bitmap) -> void` | Register a bitmap pointer. Registered bitmaps are reloaded and drawn every `render()` (in registration order) with alpha transparency from the low byte (`0xRRGGBBAA`). |
+| `fn registerBitmap(bitmap: Bitmap) -> void` | Register a bitmap pointer. Bitmap priority controls sprite overlap: negative priorities render below sprites, non-negative priorities render above sprites. |
 | `fn removeBitmap(bitmap: Bitmap) -> void` | Unregister a previously registered bitmap pointer. |
 
 `pullControls` keybinds:
@@ -460,7 +490,7 @@ Render flow:
 2. `registerLayer` and `registerSprite` register/update objects by `id`; `removeLayer` and `removeSprite` unregister by pointer.
 3. `registerBitmap` registers bitmap pointers for per-frame drawing, and `removeBitmap` unregisters them.
 4. `setPixel` queues manual pixel writes.
-5. `render()` draws layers, then sprites, then registered bitmaps, then queued pixel writes.
+5. `render()` draws layers, then bitmaps with negative priority, then sprites, then bitmaps with non-negative priority, then queued pixel writes.
 
 Layer transform modes:
 

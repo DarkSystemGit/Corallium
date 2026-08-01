@@ -1,0 +1,32 @@
+fn loadProgram(sector: 1,offset: 2)->0{
+    // write:  io 0,4; store r1,518; storeEx ex2,519; mov 16777216, arp; mov 0, srp; jmp 0
+    // bytes: 33 0 4 16 518 -32768 1 1 45 519 -32768 1 11 17 -32768 2 0 256 -32768 1 12 17 0 -32768 1 9 19 0
+    store 16777198_i32, 33;
+    store 16777199_i32, 0;
+    store 16777200_i32, 4;
+    store 16777201_i32, 17;
+    store 16777202_i32, -32768;
+    store 16777203_i32, 2;
+    store 16777204_i32, 0;
+    store 16777205_i32, 256;
+    store 16777206_i32, -32768;
+    store 16777207_i32, 1;
+    store 16777208_i32, 12;
+    store 16777209_i32, 17;
+    store 16777210_i32, 0;
+    store 16777211_i32, -32768;
+    store 16777212_i32, 1;
+    store 16777213_i32, 8;
+    store 16777214_i32, 19;
+    store 16777215_i32, 0;
+    // push sector
+    addEx arp, sector;
+    load ex1, r1;
+    addEx arp, offset;
+    loadEx ex1, ex2;
+    push 0;//dest
+    pushEx ex2;//offset
+    push r1;//sec
+    // jump end of mem
+    jmp 16777198_i32;
+}

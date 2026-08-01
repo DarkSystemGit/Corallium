@@ -1,8 +1,15 @@
 use crate::util::{convert_i16_to_i32, convert_i16_to_u32};
 use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
-use minifb::{self, Key, Scale, Window, WindowOptions};
-use std::{cell::RefCell, rc::Rc, time::Instant, vec};
+use gamepads::Gamepads;
+use minifb::{self, Icon, Key, Scale, Window, WindowOptions};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    thread,
+    time::{Duration, Instant},
+    vec,
+};
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //Types
     //struct Atlas{
@@ -39,6 +46,7 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //struct Bitmap{
     //  i16 x
     //  i16 y
+    //  i16 priority
     //  i16 length
     //  i16 width
     //  *[i32] data
@@ -201,13 +209,32 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     None
                 })
                 .expect("Couldn't get graphics system");
-            let rkeys = gs
+            let mut rkeys = gs
                 .display
                 .pull_keys()
                 .iter()
                 .map(|x| map_key_to_control(*x))
                 .flatten()
                 .collect::<Vec<Controls>>();
+            gs.gamepads.poll();
+            for gamepad in gs.gamepads.all() {
+                for button in gamepad.all_currently_pressed() {
+                    match button {
+                        gamepads::Button::ActionUp => rkeys.push(Controls::Y),
+                        gamepads::Button::ActionDown => rkeys.push(Controls::A),
+                        gamepads::Button::ActionLeft => rkeys.push(Controls::X),
+                        gamepads::Button::ActionRight => rkeys.push(Controls::B),
+                        gamepads::Button::FrontLeftLower => rkeys.push(Controls::LeftTrigger),
+                        gamepads::Button::FrontRightLower => rkeys.push(Controls::RightTrigger),
+                        gamepads::Button::RightCenterCluster => rkeys.push(Controls::Start),
+                        gamepads::Button::DPadUp => rkeys.push(Controls::Up),
+                        gamepads::Button::DPadDown => rkeys.push(Controls::Down),
+                        gamepads::Button::DPadLeft => rkeys.push(Controls::Left),
+                        gamepads::Button::DPadRight => rkeys.push(Controls::Right),
+                        _ => {}
+                    }
+                }
+            }
             let mut key_b = vec![0; 11];
             for i in rkeys {
                 match i {
@@ -490,15 +517,17 @@ fn load_bitmap(ptr: usize, machine: &mut Machine, device_id: usize) {
     //[Bitmap layout]
     // i16 x
     // i16 y
+    // i16 priority
     // i16 length
     // i16 width
     // *[i32] data
-    let bitmap = machine.memory.read_range(ptr..ptr + 6, machine);
+    let bitmap = machine.memory.read_range(ptr..ptr + 7, machine);
     let x = bitmap[0] as i32;
     let y = bitmap[1] as i32;
-    let length = usize::try_from(bitmap[2]).expect("Bitmap length must be non-negative");
-    let width = usize::try_from(bitmap[3]).expect("Bitmap width must be non-negative");
-    let data_ptr = convert_i16_to_u32(&bitmap[4..6]).expect("Couldn't get bitmap data") as usize;
+    let priority = bitmap[2];
+    let length = usize::try_from(bitmap[3]).expect("Bitmap length must be non-negative");
+    let width = usize::try_from(bitmap[4]).expect("Bitmap width must be non-negative");
+    let data_ptr = convert_i16_to_u32(&bitmap[5..7]).expect("Couldn't get bitmap data") as usize;
     let pixel_count = width
         .checked_mul(length)
         .expect("Bitmap dimensions overflow");
@@ -511,7 +540,7 @@ fn load_bitmap(ptr: usize, machine: &mut Machine, device_id: usize) {
         .chunks(2)
         .map(|chunk| convert_i16_to_u32(chunk).expect("Couldn't convert i16 to color"))
         .collect::<Vec<u32>>();
-    get_gs(machine, device_id).add_bitmap(x, y, length, width, data);
+    get_gs(machine, device_id).add_bitmap(x, y, priority, length, width, data);
 }
 #[derive(Debug)]
 struct BGLayer {
@@ -578,11 +607,13 @@ pub struct GraphicsSystem {
     queuedPixels: Vec<(usize, usize, u32)>,
     last_render_at: Option<Instant>,
     delta_time_ms: i32,
+    gamepads: debug_ignore::DebugIgnore<Gamepads>,
 }
 #[derive(Debug, Clone)]
 struct RegisteredBitmap {
     x: i32,
     y: i32,
+    priority: i16,
     length: usize,
     width: usize,
     data: Vec<u32>,
@@ -632,6 +663,7 @@ impl GraphicsSystem {
             sprites: ([0, 0], Vec::new()),
             bitmaps: vec![],
             atlas: Rc::new(RefCell::new(TileAtlas::new())),
+            gamepads: Gamepads::new().into(),
             display: Display::new(
                 resolution[0] as usize,
                 resolution[1] as usize,
@@ -690,10 +722,19 @@ impl GraphicsSystem {
     pub fn clear_bitmaps(&mut self) {
         self.bitmaps.clear();
     }
-    pub fn add_bitmap(&mut self, x: i32, y: i32, length: usize, width: usize, data: Vec<u32>) {
+    pub fn add_bitmap(
+        &mut self,
+        x: i32,
+        y: i32,
+        priority: i16,
+        length: usize,
+        width: usize,
+        data: Vec<u32>,
+    ) {
         self.bitmaps.push(RegisteredBitmap {
             x,
             y,
+            priority,
             length,
             width,
             data,
@@ -722,6 +763,8 @@ impl GraphicsSystem {
         self.background_layers[layer as usize].tilemap.get_tile(loc);
     }
     pub fn render(&mut self) {
+        const MIN_FRAME_MS: i32 = 15;
+        let should_blit = (self.delta_time_ms >= MIN_FRAME_MS) || self.last_render_at.is_none();
         let now = Instant::now();
         self.delta_time_ms = self
             .last_render_at
@@ -731,10 +774,21 @@ impl GraphicsSystem {
             })
             .unwrap_or(0);
         self.last_render_at = Some(now);
+
         self.display.clear();
 
         for layer in &mut self.background_layers {
             layer.render(&mut self.display.buffer, self.display.width as u32);
+        }
+        let mut bitmaps = self.bitmaps.clone();
+        bitmaps.sort_by_key(|bitmap| bitmap.priority);
+        for bitmap in bitmaps.iter().filter(|bitmap| bitmap.priority < 0) {
+            render_bitmap(
+                bitmap,
+                &mut self.display.buffer,
+                self.display.width,
+                self.display.height,
+            );
         }
         let mut sprites = self.sprites.1.clone();
 
@@ -744,7 +798,6 @@ impl GraphicsSystem {
         });
         for sprite in sprites {
             if let Some(sprite) = sprite {
-                //dbg!(sprite.id);
                 sprite.render(
                     self.sprites.0,
                     &mut self.display.buffer,
@@ -752,39 +805,25 @@ impl GraphicsSystem {
                 );
             }
         }
-        for bitmap in &self.bitmaps {
-            for src_y in 0..bitmap.length {
-                let dst_y = bitmap.y + src_y as i32;
-                if dst_y < 0 || dst_y >= self.display.height as i32 {
-                    continue;
-                }
-                let src_row_start = src_y * bitmap.width;
-                let dst_row_start = dst_y as usize * self.display.width;
-                for src_x in 0..bitmap.width {
-                    let dst_x = bitmap.x + src_x as i32;
-                    if dst_x < 0 || dst_x >= self.display.width as i32 {
-                        continue;
-                    }
-                    let bitmap_pixel = bitmap.data[src_row_start + src_x];
-                    let alpha = bitmap_pixel & 0xff;
-                    if alpha == 0 {
-                        continue;
-                    }
-                    let dst_idx = dst_row_start + dst_x as usize;
-                    if alpha == 255 {
-                        self.display.buffer[dst_idx] = bitmap_pixel;
-                        continue;
-                    }
-                    let base_pixel = self.display.buffer[dst_idx];
-                    self.display.buffer[dst_idx] =
-                        blend_over(base_pixel, bitmap_pixel, alpha as u32);
-                }
-            }
+
+        for bitmap in bitmaps.iter().filter(|bitmap| bitmap.priority >= 0) {
+            render_bitmap(
+                bitmap,
+                &mut self.display.buffer,
+                self.display.width,
+                self.display.height,
+            );
         }
         for pix in self.queuedPixels.drain(..) {
             self.display.buffer[pix.1 * self.display.width + pix.0] = pix.2;
         }
-        self.display.render();
+
+        if should_blit {
+            self.last_render_at = Some(now);
+            self.display.render();
+        } else {
+            self.display.update();
+        }
         self.controls.clear();
         for k in self.display.pull_keys() {
             if let Some(control) = map_key_to_control(k) {
@@ -807,6 +846,40 @@ fn blend_over(base: u32, top: u32, top_alpha: u32) -> u32 {
         let out_ch = (base_ch * (255 - top_alpha) + top_ch * top_alpha) / 255;
         acc | (out_ch << shift)
     })
+}
+
+fn render_bitmap(
+    bitmap: &RegisteredBitmap,
+    buffer: &mut [u32],
+    display_width: usize,
+    display_height: usize,
+) {
+    for src_y in 0..bitmap.length {
+        let dst_y = bitmap.y + src_y as i32;
+        if dst_y < 0 || dst_y >= display_height as i32 {
+            continue;
+        }
+        let src_row_start = src_y * bitmap.width;
+        let dst_row_start = dst_y as usize * display_width;
+        for src_x in 0..bitmap.width {
+            let dst_x = bitmap.x + src_x as i32;
+            if dst_x < 0 || dst_x >= display_width as i32 {
+                continue;
+            }
+            let bitmap_pixel = bitmap.data[src_row_start + src_x];
+            let alpha = bitmap_pixel & 0xff;
+            if alpha == 0 {
+                continue;
+            }
+            let dst_idx = dst_row_start + dst_x as usize;
+            if alpha == 255 {
+                buffer[dst_idx] = bitmap_pixel;
+                continue;
+            }
+            let base_pixel = buffer[dst_idx];
+            buffer[dst_idx] = blend_over(base_pixel, bitmap_pixel, alpha as u32);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1014,6 +1087,9 @@ impl TileAtlas {
         TileAtlas { tiles: Vec::new() }
     }
     fn _render_tile(&self, index: usize, loc: Point, buf: &mut Vec<u32>, buf_width: u32) {
+        if index >= self.tiles.len() {
+            return;
+        }
         for (i, row) in self.tiles[index].chunks(8).enumerate() {
             let x = loc[0];
             let y = loc[1] + i as i32;
@@ -1036,6 +1112,9 @@ impl TileAtlas {
         }
     }
     fn render_tile(&self, index: usize, loc: Point, buf: &mut Vec<u32>, buf_width: u32) {
+        if index >= self.tiles.len() {
+            return;
+        }
         let tile = &self.tiles[index];
         let (target_x, target_y) = (loc[0], loc[1]);
         let buf_height = (buf.len() as u32 / buf_width) as i32;
@@ -1059,17 +1138,18 @@ impl TileAtlas {
         for i in start_row..end_row {
             let tile_row_start = i * 8 + row_offset;
             for i in 0..copy_len {
-                if tile[tile_row_start + i] != 0 {
-                    let src = buf[buf_idx + i];
-                    let dst = tile[tile_row_start + i];
-                    let color = (0..4).fold(0, |acc, i| {
-                        acc | ((((src >> (i * 8)) & 0xff) * (src & 0xff)
-                            + ((dst >> (i * 8)) & 0xff) * (255 - (src & 0xff)))
-                            / 255)
-                            << (i * 8)
-                    });
-                    buf[buf_idx + i] = color;
+                let tile_pixel = tile[tile_row_start + i];
+                let alpha = tile_pixel & 0xff;
+                if alpha == 0 {
+                    continue;
                 }
+                let dst_idx = buf_idx + i;
+                if alpha == 255 {
+                    buf[dst_idx] = tile_pixel;
+                    continue;
+                }
+                let base_pixel = buf[dst_idx];
+                buf[dst_idx] = blend_over(base_pixel, tile_pixel, alpha);
             }
             //buf[buf_idx..buf_idx + copy_len].copy_from_slice(&tile[tile_row_start..tile_row_end]);
             buf_idx += buf_width as usize;
@@ -1096,6 +1176,7 @@ impl Display {
         .expect("Unable to open the window");
 
         window.set_target_fps(target_fps);
+
         Self {
             width,
             height,
@@ -1128,5 +1209,8 @@ impl Display {
     }
     fn clear(&mut self) {
         self.buffer.fill(0);
+    }
+    fn update(&mut self) {
+        self.window.update();
     }
 }

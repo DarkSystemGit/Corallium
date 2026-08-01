@@ -1,0 +1,312 @@
+import <fs>;
+import <serial>;
+import <gfx>;
+import <audio>;
+import <clock>;
+import <mem>;
+import <cbmp>;
+import <string>;
+import <sfx>;
+import "loader.h";
+struct Game{
+    displayName: [i16],
+    displayNameLen: i16,
+    iconName: [char],
+    fileName: [char]
+}
+struct GameArray{
+    array: [Game],
+    len: i16
+}
+struct GameName{
+    numbers: [i16],
+    len: i16
+}
+struct GameIconArray{
+    icons: [gfx::Bitmap],
+    labels: [gfx::Sprite],
+    sprites: [gfx::Sprite],
+    len: i16
+}
+fn main()->void{
+    let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
+    fs::readFile(boot_screen_file,0 as i32,None);
+    let bitmap: gfx::Bitmap=gfx::Bitmap{
+        x: 0,
+        y: 0,
+        priority: 1,
+        width: 320,
+        length: 240,
+        data: boot_screen_file.buf as [i32]
+    };
+    let startup: fs::FileBuf=fs::openFile("linked/startup.raw");
+     fs::readFile(startup, 0 as i32, None);
+    audio::loadSound(9,startup.buf as [f32],(startup.len));
+    gfx::registerBitmap(bitmap);
+    gfx::render();
+    let games: GameArray=parseManifest("linked/games.manifest");
+    gfx::removeBitmap(bitmap);
+    let atlas_file: fs::FileBuf=fs::openFile("linked/atlas.cbmp");
+    fs::readFile(atlas_file,0 as i32,None);
+    let source: gfx::Bitmap = cbmp::from_file(atlas_file);
+    let atlas: [i16] = cbmp::bitmap_to_atlas(source, 171, 0, 0);
+    let background_file: fs::FileBuf=fs::openFile("linked/background.cbmp");
+    fs::readFile(background_file,0 as i32,None);
+    let background: gfx::Bitmap=cbmp::from_file(background_file);
+    background.priority = -10;
+    let fade_file: fs::FileBuf=fs::openFile("linked/fade.cbmp");
+    fs::readFile(fade_file,0 as i32,None);
+    let fade: gfx::Bitmap=cbmp::from_file(fade_file);
+    fade.priority = 1;
+    let appIconTm: [i16]=[
+        1,2,3,4,5,6,7,8,9,
+        10,11,12,13,14,15,16,17,18,
+        19,20,21,22,23,24,25,26,27,
+        28,29,30,31,32,33,34,35,36,
+        37,38,39,40,41,42,43,44,45,
+        46,47,48,49,50,51,52,53,54,
+        55,56,57,58,59,60,61,62,63,
+        64,65,66,67,68,69,70,71,72,
+        73,74,75,76,77,78,79,80,81,
+    ];
+    gfx::registerAtlas(atlas);
+    gfx::registerBitmap(background);
+    let gameIcons: GameIconArray=genAppSprites(games,appIconTm);
+    gfx::registerBitmap(fade);
+    fs::closeFile(boot_screen_file);
+    fs::closeFile(startup);
+    let controls: [bool] = [false; 11];
+    let hold: i16 = 10;
+    let bpress: bool = false;
+    let center: i16 = (games.len - 1) / 2;
+    let selected: i16 = center;
+    let menu: fs::FileBuf=fs::openFile("linked/menu_theme.csfx");
+    fs::readFile(menu,0 as i32,None);
+    audio::masterVolume(1 as i32);
+    let menu_sfx: sfx::SfxInfo = sfx::play(menu, None);
+    let menu_delay: i32 = 160000 as i32;
+    let menu_restart_at: i32 = audio::masterClock() + (menu_sfx.len * 32 as i32) + menu_delay;
+    for(let z: i16 = 0; true; z = z + 1){
+        if((sfx::done(menu_sfx)) and (audio::masterClock() >= menu_restart_at)){
+            menu_sfx=sfx::play(menu, None);
+            menu_restart_at = audio::masterClock() + (menu_sfx.len * 32 as i32) + menu_delay;
+        };
+        gfx::render();
+        gfx::pullControls(controls);
+        if(controls[gfx::Control::Left] & (!bpress)){
+            if(selected > 0){
+                selected = selected - 1;
+                for(let y: i16 = 16; y > 0; y = y - 1){
+                    moveGameIcons(gameIcons, 6);
+                    gfx::render();
+                };
+            };
+            bpress = true;
+        };
+        if(controls[gfx::Control::Right] & (!bpress)){
+            if(selected < games.len - 1){
+                selected = selected + 1;
+                for(let y: i16 = 16; y > 0; y = y - 1){
+                    moveGameIcons(gameIcons, -6);
+                    gfx::render();
+                };
+            };
+            bpress = true;
+        };
+        if(hold == 0){
+            bpress = false;
+            hold = 10;
+        };
+        if(bpress){
+            hold = hold - 1;
+        };
+        if(controls[gfx::Control::A]){
+            let game: Game = games.array[selected as i32];
+            gfx::removeBitmap(fade);
+            gfx::removeBitmap(background);
+            freeAppSprites(gameIcons.sprites, gameIcons.len as i32);
+            freeAppSprites(gameIcons.labels, gameIcons.len as i32);
+            for(let i: i16 = 0; i < gameIcons.len; i = i + 1){
+                gfx::removeBitmap(gameIcons.icons[i as i32]);
+            };
+            cbmp::free_atlas(atlas);
+            fs::closeFile(background_file);
+            fs::closeFile(fade_file);
+            fs::closeFile(atlas_file);
+            fs::closeFile(startup);
+            fs::closeFile(boot_screen_file);
+            sfx::stop_sfx(menu_sfx);
+            audio::masterVolume(100 as i32);
+            let cart_file: fs::FileBuf = fs::openFile(game.fileName);
+            loader::loadProgram(cart_file.id, cart_file.offset);
+        };
+    };
+    return;
+}
+fn moveGameIcons(gameIcons: GameIconArray,offset: i16)->void{
+    for(let i: i16=0;i<gameIcons.len;i=i+1){
+        let icon: gfx::Bitmap=gameIcons.icons[i as i32];
+        let label: gfx::Sprite=gameIcons.labels[i as i32];
+        let sprite: gfx::Sprite=gameIcons.sprites[i as i32];
+
+        icon.x = icon.x + offset;
+        label.x = label.x + offset;
+        sprite.x = sprite.x + offset;
+    };
+    return;
+}
+fn genAppSprites(games: GameArray,tm: [i16])->GameIconArray{
+    let sprites: [gfx::Sprite]=mem::alloc(games.len as i32 * 2 as i32) as [gfx::Sprite];
+    let labels: [gfx::Sprite]=mem::alloc(games.len as i32 * 2 as i32) as [gfx::Sprite];
+    let icons: [gfx::Bitmap]=mem::alloc(games.len as i32 * 2 as i32) as [gfx::Bitmap];
+    let nextSpriteId: i16=0;
+    let spawn_order: [i16]=mem::alloc(games.len as i32) as [i16];
+    for(let i: i16=0;i<games.len;i=i+1){
+        spawn_order[i as i32]=0;
+    };
+    let center: i16 = (games.len-1) / 2;
+    let left: i16 = center - 1;
+    let right: i16 = center + 1;
+    spawn_order[center as i32] = 1;
+    let rank: i16 = 2;
+    while((left >= 0) or (right < games.len)){
+        if(left >= 0){
+            spawn_order[left as i32] = rank;
+            rank = rank + 1;
+            left = left - 1;
+        };
+        if(right < games.len){
+            spawn_order[right as i32] = rank;
+            rank = rank + 1;
+            right = right + 1;
+        };
+    };
+
+    let debug: bool=false;
+    if(debug){
+    for(let i: i16=0;i<games.len;i=i+1){
+        let game: Game=games.array[i];
+        serial::write(" File: ");
+        serial::write(game.fileName);
+        serial::write(" Icon: ");
+        serial::write(game.iconName);
+        serial::write("\n");
+        serial::write("Spawn Order: ");
+        serial::writeNum(spawn_order[i] as i32);
+        serial::write("\n");
+    };};
+    for(let i: i16=0;i<games.len;i=i+1){
+        let game: Game=games.array[i];
+        let spriteloc: gfx::Sprite=mem::alloc(sizeof(gfx::Sprite) as i32) as gfx::Sprite;
+        let sprite: gfx::Sprite=gfx::Sprite{
+            id: nextSpriteId,
+            x: 31 + (spawn_order[i] * 96),
+            y: 58,
+            priority: 0,
+            tilemap_height: 9,
+            tilemap_width: 9,
+            tilemap: tm,
+            scale_x: 1.0,
+            scale_y: 1.0
+        };
+        mem::copy(sprite as &void, spriteloc as &void, sizeof(gfx::Sprite) as i32,0 as i32);
+        let textloc: gfx::Sprite=mem::alloc(sizeof(gfx::Sprite) as i32) as gfx::Sprite;
+        let text: gfx::Sprite=gfx::Sprite{
+            id: nextSpriteId + 1,
+            x:  ((spawn_order[i] * 96)+64)-(4*(game.displayNameLen)),
+            y: 130,
+            priority: 0,
+            tilemap_height: 1,
+            tilemap_width: game.displayNameLen,
+            tilemap: game.displayName,
+            scale_x: 1.0,
+            scale_y: 1.0
+        };
+        mem::copy(text as &void, textloc as &void, sizeof(gfx::Sprite) as i32,0 as i32);
+        sprites[i as i32]=spriteloc;
+        labels[i as i32]=textloc;
+        gfx::registerSprite(sprites[i as i32]);
+        gfx::registerSprite(labels[i as i32]);
+        let iconFile: fs::FileBuf=fs::openFile(game.iconName);
+        fs::readFile(iconFile,0 as i32,None);
+        let bitmap: gfx::Bitmap=cbmp::from_file(iconFile);
+        bitmap.x = 32 + (spawn_order[i] * 96);
+        bitmap.y = 59;
+        bitmap.priority = 1;
+        icons[i as i32]=mem::alloc(sizeof(gfx::Bitmap) as i32) as gfx::Bitmap;
+        mem::copy(bitmap as &void, icons[i as i32] as &void, sizeof(gfx::Bitmap) as i32,0 as i32);
+        gfx::registerBitmap(icons[i as i32]);
+        nextSpriteId = nextSpriteId + 2;
+    };
+    return GameIconArray{
+        icons: icons,
+        labels: labels,
+        sprites: sprites,
+        len: games.len
+    };
+}
+fn freeAppSprites(sprites: [gfx::Sprite],len: i32)->void{
+    for(let i: i32=(0 as i32);i<len;i=i+(1 as i32)){
+        gfx::removeSprite(sprites[i]);
+        mem::free(sprites[i] as &void);
+    };
+    mem::free(sprites as &void);
+    return;
+}
+fn parseManifest(path: [char])->GameArray{
+    let manifest_file: fs::FileBuf=fs::openFile(path);
+    fs::readFile(manifest_file,0 as i32,None);
+    let manifest_text: [char]=fs::readText(manifest_file);
+    let lines: string::SplitString=string::split(manifest_text,"\n");
+    mem::free(manifest_text as &void);
+    let games: [Game]=mem::alloc((2*lines.len) as i32) as [Game];
+    let gc: i16=0;
+    for(let i: i16=0;i<lines.len;i=i+1){
+        let gameData: string::SplitString=string::split(lines.sections[i],",");
+        if(gameData.len==2){
+        let bf: [char]=string::append(gameData.sections[0],".cart");
+        let fileName: [char]=string::append("linked/games/",bf);
+        mem::free(bf as &void);
+        let bi: [char]=string::append(gameData.sections[0],".cbmp");
+        let iconName: [char]=string::append("linked/games/",bi);
+        mem::free(bi as &void);
+        let display_name: [char]=gameData.sections[1];
+        let tilebuf: [i16]=mem::alloc(string::len(display_name) as i32) as [i16];
+        for(let j: i32=0;j<(string::len(display_name));j=j+(1 as i32)){
+            let charecter: i16=display_name[j];
+            if((charecter>=64) and (charecter<=91)){tilebuf[j]=charecter-65+82;};//uppercase letters 82-108
+            if((charecter>=96) and (charecter<=123)){tilebuf[j]=charecter-97+109;};//lowercase letters 110-136
+            if((charecter>=47) and (charecter<=58)){tilebuf[j]=charecter-48+135;};//numbers 137-144
+            if((charecter>=32) and (charecter<=48)){tilebuf[j]=charecter-33+145;};//symbols 145-159 !, ", #, $, %, &, ', (, ), *, +, ,, -, ., /
+            if((charecter>=57) and (charecter<=65)){tilebuf[j]=charecter-58+160;};//symbols 160-166 :, ;, <, =, >, ?, @
+            if(charecter==32){tilebuf[j]=0;};//space 0
+        };
+        let game: Game=Game{
+            fileName: fileName,
+            displayName: tilebuf,
+            displayNameLen: string::len(display_name) as i16,
+            iconName: iconName
+        };
+        let gameloc: Game=mem::alloc(sizeof(Game) as i32) as Game;
+        mem::copy(game as &void, gameloc as &void, sizeof(Game) as i32,0 as i32);
+        string::free_split_string(gameData);
+        games[i]=gameloc;
+        gc=gc+1;
+        let debug: bool=false;
+        if(debug){
+            serial::write("Game: ");
+            serial::write(gameData.sections[1]);
+            serial::write(" File: ");
+            serial::write(game.fileName);
+            serial::write(" Icon: ");
+            serial::write(game.iconName);
+            serial::write("\n");
+        };
+        }else{
+            string::free_split_string(gameData);
+        };
+    };
+    string::free_split_string(lines);
+    fs::closeFile(manifest_file);
+    return GameArray{array:games,len:gc};
+}

@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use std::path::Path;
 
 use crate::assembler::parser::{Function, Statement, StatementKind};
 use crate::executable::{Bytecode, Data, Executable, Fn, Library};
@@ -84,7 +85,13 @@ impl CodeGen {
             }
             Some(Object::Exe(exe))
         } else {
-            let mut exe = Library::new(self.file_name.clone());
+            let lib_name = Path::new(&self.file_name)
+                .file_stem()
+                .expect("Invalid File Path")
+                .to_str()
+                .expect("Invalid File Path")
+                .to_string();
+            let mut exe = Library::new(lib_name);
             for (_, data) in &self.globals {
                 exe.add_constant(data.clone());
             }
@@ -131,6 +138,7 @@ impl CodeGen {
             Value::Int16(i) => Some(Bytecode::Int(i)),
             Value::Float(f) => Some(Bytecode::Float(f)),
             Value::Int32(i) => Some(Bytecode::Int32(i)),
+            Value::HeapStart => Some(Bytecode::HeapStart()),
             Value::Global(name) => match self.globals.get_index_of(&name) {
                 Some(index) => Some(Bytecode::ConstantLoc(index)),
                 None => {

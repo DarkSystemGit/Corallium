@@ -179,6 +179,7 @@ pub enum Literal {
 #[derive(Debug, Clone)]
 pub enum UnaryOperator {
     Not,
+    LogicalNot,
     Neg,
     Deref,
 }
@@ -876,7 +877,12 @@ impl Parser {
                     let ((), r_bp) = self.prefix_binding_power(&op);
                     let rhs = self.parse_expr_bp(r_bp)?;
                     match op {
-                        OperatorKind::Not => Expression::Unary(UnaryOperator::Not, Box::new(rhs)),
+                        OperatorKind::Not => {
+                            Expression::Unary(UnaryOperator::LogicalNot, Box::new(rhs))
+                        }
+                        OperatorKind::BitwiseNot => {
+                            Expression::Unary(UnaryOperator::Not, Box::new(rhs))
+                        }
                         OperatorKind::Negate => {
                             Expression::Unary(UnaryOperator::Neg, Box::new(rhs))
                         }

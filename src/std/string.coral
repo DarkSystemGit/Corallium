@@ -1,4 +1,5 @@
 import "mem.coral";
+import "serial.h";
 fn len(str: [char])->i32{
     let c:i32=0;
     while((str[c] as i16)!=0){c=c+(1 as i32);};
@@ -11,4 +12,81 @@ fn append(str1: [char], str2: [char])->[char]{
     mem::copy(str2 as &void,alloc as &void,len(str2),len(str1));
     alloc[ttl-(1 as i32)]=0 as char;
     return alloc;
+}
+struct SplitString{
+    len: i16,
+    sections: [[char]]
+}
+fn split(str: [char],substring: [char])->SplitString{
+    let input_len: i32=len(str);
+    let delim_len: i32=len(substring);
+    if (delim_len==(0 as i32)){
+        let sections: [[char]]=mem::alloc(2 as i32) as [[char]];
+        let full: [char]=mem::alloc(input_len+(1 as i32)) as [char];
+        let copy_i: i32=0 as i32;
+        while(copy_i<input_len){
+            full[copy_i]=str[copy_i];
+            copy_i=copy_i+(1 as i32);
+        };
+        full[input_len]=0 as char;
+        sections[0 as i32]=full;
+        return SplitString{len: 1 as i16, sections: sections};
+    };
+    let section_count: i32=1 as i32;
+    let i: i32=0 as i32;
+    while((i+delim_len)<=input_len){
+        let matches: bool=true;
+        let j: i32=0 as i32;
+        while(j<delim_len){
+            if ((str[i+j] as i16)!=(substring[j] as i16)){matches=false;};
+            j=j+(1 as i32);
+        };
+        if (matches){section_count=section_count+(1 as i32); i=i+delim_len;}
+        else{i=i+(1 as i32);};
+    };
+    let sections: [[char]]=mem::alloc(section_count*(2 as i32)) as [[char]];
+    let section_index: i32=0 as i32;
+    let segment_start: i32=0 as i32;
+    i=0 as i32;
+    while((i+delim_len)<=input_len){
+        let matches: bool=true;
+        let j: i32=0 as i32;
+        while(j<delim_len){
+            if ((str[i+j] as i16)!=(substring[j] as i16)){matches=false;};
+            j=j+(1 as i32);
+        };
+        if (matches){
+            let segment_len: i32=i-segment_start;
+            let part: [char]=mem::alloc(segment_len+(1 as i32)) as [char];
+            let k: i32=0 as i32;
+            while(k<segment_len){
+                part[k]=str[segment_start+k];
+                k=k+(1 as i32);
+            };
+            part[segment_len]=0 as char;
+            sections[section_index]=part;
+            section_index=section_index+(1 as i32);
+            segment_start=i+delim_len;
+            i=segment_start;
+        }else{
+            i=i+(1 as i32);
+        };
+    };
+    let final_len: i32=input_len-segment_start;
+    let final_part: [char]=mem::alloc(final_len+(1 as i32)) as [char];
+    let k: i32=0 as i32;
+    while(k<final_len){
+        final_part[k]=str[segment_start+k];
+        k=k+(1 as i32);
+    };
+    final_part[final_len]=0 as char;
+    sections[section_index]=final_part;
+    return SplitString{len: section_count as i16, sections: sections};
+}
+fn free_split_string(split_string: SplitString)->void{
+    for (let i: i16=0; i<split_string.len; i=i+1){
+        mem::free(split_string.sections[i] as &void);
+    };
+    mem::free(split_string.sections as &void);
+    return;
 }

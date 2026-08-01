@@ -101,6 +101,28 @@ fn readFile(buf: FileBuf, offset: i32,len: i32?)->void{
     buf.buf_offset=buf.offset+offset;
     return;
 }
+fn readText(buf: FileBuf)->[char]{
+    let packed: [i16]=buf.buf as [i16];
+    let text: [char]=mem::alloc(((buf.buf_len*(2 as i32))+(1 as i32))) as [char];
+    let text_len: i32=0 as i32;
+    let i: i32=0 as i32;
+    while(i<buf.buf_len){
+        let word: i16=packed[i];
+        let lo: i16=word & (255 as i16);
+        let hi: i16=((((word as i32) >> (8 as i32)) as i16) & (255 as i16));
+        if (lo!=(0 as i16)){
+            text[text_len]=lo as char;
+            text_len=text_len+(1 as i32);
+        };
+        if (hi!=(0 as i16)){
+            text[text_len]=hi as char;
+            text_len=text_len+(1 as i32);
+        };
+        i=i+(1 as i32);
+    };
+    text[text_len]=0 as char;
+    return text;
+}
 fn writeFile(buf: FileBuf)->void{
     disk::write(buf.id,buf.buf_offset,buf.buf_len,buf.buf);
     return;

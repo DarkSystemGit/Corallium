@@ -1,4 +1,4 @@
-use crate::vm::{Machine, unpack_dt};
+use crate::vm::{unpack_dt, Machine};
 use std::io::{self, Write};
 
 pub fn driver(machine: &mut Machine, command: i16, _device_id: usize) {

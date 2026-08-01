@@ -13,6 +13,11 @@ fn exec_bytecode(machine: &mut Machine) {
         print!("%{:07}: ", machine.core.ip - 1);
     }
     match byte {
+        CommandType::Breakpoint => {
+            //breakpoint()
+            machine.debug = true;
+            machine.debug_console = true;
+        }
         CommandType::Add => {
             //add(i16,i16) -> r1
             let args = take_bytes(machine, 2);
@@ -678,7 +683,8 @@ fn exec_bytecode(machine: &mut Machine) {
                 &mut machine.core.srp,
             )) as usize;
             machine.core.stack.pop_range(
-                machine.core.srp - 1 - args[2] as usize..machine.core.srp - 1,
+                machine.core.srp - args[0] as usize - args[2] as usize
+                    ..machine.core.srp - args[0] as usize,
                 &mut machine.core.srp,
             );
             if machine.debug {
@@ -693,6 +699,14 @@ fn exec_bytecode(machine: &mut Machine) {
         }
         _ => {}
     }
+    let clock_speed = 100; // 100 MHz
+    let cycle_time = 1000 / clock_speed; //in ns
+    if (machine.last_cycle.elapsed().as_nanos() < cycle_time) {
+        std::thread::sleep(std::time::Duration::from_nanos(
+            ((cycle_time) - machine.last_cycle.elapsed().as_nanos()) as u64,
+        ));
+    }
+    machine.last_cycle = Instant::now();
 }
 
 fn take_bytes(machine: &mut Machine, bytecount: i16) -> Vec<f64> {
@@ -758,7 +772,9 @@ pub struct Machine {
     pub debug: bool,
     pub memory: Memory,
     pub on: bool,
+    debug_console: bool,
     pub freq: (u64, Instant),
+    pub last_cycle: Instant,
 }
 impl Machine {
     pub fn new(debug: bool) -> Machine {
@@ -769,6 +785,8 @@ impl Machine {
             on: true,
             memory: Memory::new(16 * 1024 * 1024), //16MB max
             freq: (0, Instant::now()),
+            last_cycle: Instant::now(),
+            debug_console: debug,
         };
         m
     }
@@ -806,26 +824,26 @@ impl Machine {
     }
     pub fn run(&mut self) {
         if let RawDevice::Disk(disk) = &mut self.devices[0].contents {
-            if disk[0].data.len() >= 256 {
-                self.memory
-                    .write_range(0..256, disk[0].data[0..256].to_vec(), &mut self.core);
-            } else {
+            let boot_words = 1024.min(disk[0].data.len());
+            if boot_words > 0 {
                 self.memory.write_range(
-                    0..disk[0].data.len(),
-                    disk[0].data.clone(),
+                    0..boot_words,
+                    disk[0].data[0..boot_words].to_vec(),
                     &mut self.core,
                 );
+            } else {
+                println!("Disk entrypoint sector is empty");
             }
         } else {
             println!("No Disk Plugged In");
         }
-        let mut debug_console = true;
+        //let mut debug_console = true;
         let mut breakpoints = Vec::new();
         while self.on {
             let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                if self.debug && debug_console || (breakpoints.contains(&self.core.ip)) {
+                if self.debug && self.debug_console || (breakpoints.contains(&self.core.ip)) {
                     if breakpoints.contains(&self.core.ip) {
-                        debug_console = true;
+                        self.debug_console = true;
                     }
                     let input = input!("%{}>", self.core.ip);
                     let command = input.split_whitespace().collect::<Vec<&str>>();
@@ -904,7 +922,7 @@ impl Machine {
                                 println!("{:?}", self.core.stack.data)
                             }
                             "exitConsole" => {
-                                debug_console = false;
+                                self.debug_console = false;
                                 self.freq.0 += 1;
                                 exec_bytecode(self);
                             }
@@ -1117,7 +1135,6 @@ fn dt_size(i: DataType) -> usize {
         DataType::None => 1,
     }
 }
-//srp is kinda broken
 impl Stack {
     fn new() -> Stack {
         Stack { data: Vec::new() }
@@ -1135,9 +1152,9 @@ impl Stack {
             .for_each(|(i, x)| println!("%{}: {:?}", i, x));
     }
     pub fn push(&mut self, x: DataType, srp: &mut usize) {
-        if *srp >= self.data.len() {
-            self.data.resize(*srp, DataType::None);
-        }
+        //if *srp >= self.data.len() {
+        self.data.resize(*srp, DataType::None);
+        //}
         self.data.insert(*srp, x);
         *srp += 1;
     }
@@ -1298,4 +1315,5 @@ pub enum CommandType {
     Shr,
     ShlEx,
     ShrEx,
+    Breakpoint,
 }

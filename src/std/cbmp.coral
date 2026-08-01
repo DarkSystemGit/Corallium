@@ -9,6 +9,7 @@ fn from_file(file: fs::FileBuf) -> gfx::Bitmap {
     return gfx::Bitmap {
         x: 0 as i16,
         y: 0 as i16,
+        priority: 0 as i16,
         length: words[1],
         width: words[0],
         data: data_ptr as [i32]
@@ -64,6 +65,7 @@ fn select_area(
         return gfx::Bitmap {
             x: 0 as i16,
             y: 0 as i16,
+            priority: 0 as i16,
             length: out_height,
             width: out_width,
             data: output_pixels
@@ -109,6 +111,7 @@ fn select_area(
     return gfx::Bitmap {
         x: 0 as i16,
         y: 0 as i16,
+        priority: 0 as i16,
         length: out_height,
         width: out_width,
         data: output_pixels

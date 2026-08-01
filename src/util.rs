@@ -159,6 +159,7 @@ pub fn convert_int_to_command(i: i16) -> CommandType {
         61 => CommandType::OrEx,
         62 => CommandType::NotEx,
         63 => CommandType::XorEx,
+        64 => CommandType::Breakpoint,
         _ => CommandType::NOP,
     }
 }
@@ -219,6 +220,7 @@ pub fn pack_command(c: CommandType) -> i16 {
         CommandType::OrEx => 61,
         CommandType::NotEx => 62,
         CommandType::XorEx => 63,
+        CommandType::Breakpoint => 64,
         _ => 0,
     }
 }

@@ -1,13 +1,11 @@
+use midly::{MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use midly::{Smf, TrackEventKind, MidiMessage, MetaMessage, Timing};
 
 pub const CHANNELS_WAVEFORMS: [&str; 8] = [
-    "square", "square", "square", "square",
-    "saw", "saw",
-    "triangle", "triangle"
+    "square", "square", "square", "square", "saw", "saw", "triangle", "triangle",
 ];
 
 const DEFAULT_PANS: [f32; 8] = [-0.5, 0.5, -0.2, 0.2, -0.7, 0.7, -0.4, 0.4];
@@ -103,8 +101,12 @@ pub fn process_midi(midi_bytes: &[u8], wav_export_path: Option<&str>) -> Result<
                         if vel_val > 0 {
                             // Inlined Octave Transpose
                             let mut corallium_note = key_val;
-                            while corallium_note < 36 { corallium_note += 12; }
-                            while corallium_note > 99 { corallium_note -= 12; }
+                            while corallium_note < 36 {
+                                corallium_note += 12;
+                            }
+                            while corallium_note > 99 {
+                                corallium_note -= 12;
+                            }
 
                             // Inlined Frequency Calculation
                             let freq = 440.0 * 2.0f32.powf((corallium_note as f32 - 69.0) / 12.0);
@@ -198,14 +200,38 @@ pub fn process_midi(midi_bytes: &[u8], wav_export_path: Option<&str>) -> Result<
     }
 
     let mut compiled_channels = [
-        Channel { pan: DEFAULT_PANS[0], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[1], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[2], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[3], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[4], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[5], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[6], events: Vec::new() },
-        Channel { pan: DEFAULT_PANS[7], events: Vec::new() },
+        Channel {
+            pan: DEFAULT_PANS[0],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[1],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[2],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[3],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[4],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[5],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[6],
+            events: Vec::new(),
+        },
+        Channel {
+            pan: DEFAULT_PANS[7],
+            events: Vec::new(),
+        },
     ];
 
     // Inlined Event Deduplication and Filtering
@@ -229,7 +255,11 @@ pub fn process_midi(midi_bytes: &[u8], wav_export_path: Option<&str>) -> Result<
 
             for (t, (freq, vol)) in time_groups {
                 if vol != last_vol || (vol > 0 && (freq - last_freq).abs() > 1e-4) {
-                    filtered.push(Event { timestamp_ms: t, freq, vol });
+                    filtered.push(Event {
+                        timestamp_ms: t,
+                        freq,
+                        vol,
+                    });
                     last_vol = vol;
                     last_freq = freq;
                 }
@@ -238,10 +268,13 @@ pub fn process_midi(midi_bytes: &[u8], wav_export_path: Option<&str>) -> Result<
         }
     }
 
-    let song = Song { channels: compiled_channels };
+    let song = Song {
+        channels: compiled_channels,
+    };
 
     if let Some(wav_path) = wav_export_path {
-        song.render_wav(wav_path, 44100).map_err(|e| format!("WAV render error: {:?}", e))?;
+        song.render_wav(wav_path, 44100)
+            .map_err(|e| format!("WAV render error: {:?}", e))?;
     }
 
     Ok(song.to_bytes())
@@ -305,14 +338,16 @@ impl Song {
 
     pub fn render_wav(&self, path: &str, sample_rate: u32) -> Result<(), std::io::Error> {
         // Inlined Duration Scan
-        let total_duration_ms = self.channels
+        let total_duration_ms = self
+            .channels
             .iter()
             .flat_map(|ch| ch.events.iter())
             .map(|ev| ev.timestamp_ms)
             .max()
             .unwrap_or(0);
 
-        let total_samples = ((total_duration_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
+        let total_samples =
+            ((total_duration_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
         let mut master_buffer = vec![0.0f32; total_samples * 2];
 
         for (ch_idx, channel) in self.channels.iter().enumerate() {
@@ -331,7 +366,8 @@ impl Song {
                     total_duration_ms
                 };
 
-                let start_sample = ((start_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
+                let start_sample =
+                    ((start_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
                 let end_sample = ((end_ms as f64 / 1000.0) * sample_rate as f64).round() as usize;
 
                 if end_sample > start_sample {
@@ -363,11 +399,13 @@ impl Song {
 
                     let y = match wave_type {
                         "square" => {
-                            if phase < 0.5 { 1.0 } else { -1.0 }
+                            if phase < 0.5 {
+                                1.0
+                            } else {
+                                -1.0
+                            }
                         }
-                        "saw" => {
-                            2.0 * phase - 1.0
-                        }
+                        "saw" => 2.0 * phase - 1.0,
                         "triangle" => {
                             if phase < 0.5 {
                                 4.0 * phase - 1.0

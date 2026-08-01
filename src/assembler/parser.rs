@@ -61,6 +61,7 @@ pub enum Value {
     Block(String),
     Array(Vec<Value>),
     Global(String),
+    HeapStart,
 }
 #[derive(Debug, Clone)]
 pub struct Command {
@@ -109,7 +110,7 @@ impl Parser {
             pos: 0,
             file_name,
             error: false,
-            symbols: SymbolTable { symbols: vec![] },
+            symbols: SymbolTable::new(),
             block_labels: vec![],
         }
     }
@@ -177,8 +178,7 @@ impl Parser {
             self.emitError("Global definition requires a size or initializer");
             return None;
         }
-        self.symbols
-            .insert(name.clone(), SymbolTableEntry::Global);
+        self.symbols.insert(name.clone(), SymbolTableEntry::Global);
         Some(Statement {
             kind: StatementKind::GlobalDef(GlobalDef { name, size, val }),
             loc,
@@ -213,6 +213,7 @@ impl Parser {
         let name = self.matchIdentifier()?;
         let mut args: IndexMap<String, usize> = IndexMap::new();
         self.matchToken(TokenKind::LParen);
+        self.symbols.insert(name.clone(), SymbolTableEntry::Fn);
         self.symbols.enter_scope();
         while self.peek().kind != TokenKind::RParen {
             let name = self.matchIdentifier()?;
@@ -229,9 +230,8 @@ impl Parser {
         self.matchToken(TokenKind::Arrow);
         let returned_bytes = self.matchInteger()? as usize;
         self.matchToken(TokenKind::LBrace);
-        self.symbols.insert(name.clone(), SymbolTableEntry::Fn);
-        self.block_labels
-            .push(self.collect_block_labels(self.pos));
+
+        self.block_labels.push(self.collect_block_labels(self.pos));
         let mut stmts = vec![];
         while self.peek().kind != TokenKind::RBrace {
             match self.parseStatement() {
@@ -304,6 +304,7 @@ impl Parser {
                     .map(|x| Value::Int16(*x as i16))
                     .collect(),
             )),
+            TokenKind::HeapStart => Some(Value::HeapStart),
             TokenKind::LBrace => {
                 let mut vals = vec![];
                 while self.peek().kind != TokenKind::RBrace {
@@ -430,7 +431,7 @@ impl Parser {
     }
     fn command_arg_count(op: CommandType) -> usize {
         match op {
-            CommandType::Exit | CommandType::NOP => 0,
+            CommandType::Exit | CommandType::NOP | CommandType::Return => 0,
             CommandType::Not
             | CommandType::NotEx
             | CommandType::Push
@@ -439,7 +440,6 @@ impl Parser {
             | CommandType::Pop
             | CommandType::Jump
             | CommandType::Call => 1,
-            CommandType::Return => 3,
             CommandType::Add
             | CommandType::Sub
             | CommandType::Mul
@@ -496,7 +496,8 @@ impl Parser {
             | CommandType::SRP
             | CommandType::ARP
             | CommandType::EX1
-            | CommandType::EX2 => 0,
+            | CommandType::EX2
+            | CommandType::Breakpoint => 0,
         }
     }
 }

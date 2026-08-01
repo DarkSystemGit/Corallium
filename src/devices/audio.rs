@@ -4,12 +4,13 @@ use crate::util::unpack_float;
 use crate::vm::{DataType, Machine};
 use arc_swap::{ArcSwap, ArcSwapAny};
 use hound;
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::{
+    collections::HashMap,
     io::Cursor,
     sync::{
-        Arc,
         atomic::{AtomicI32, Ordering::Relaxed},
+        Arc, Mutex,
     },
     vec,
 };
@@ -139,6 +140,7 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 };
                 if let Some(command) = command {
                     audio.schedule_update(ScheduledUpdate {
+                        schedule_id: 0,
                         time,
                         channel,
                         command,
@@ -169,6 +171,83 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                 println!("IO.audio.masterClock -> {}", clock);
             }
         }
+        10 => {
+            //scheduleWithId(channel, time, commandType, value, scheduleId)
+            if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                let args = pop_stack(&mut machine.core, 5);
+                let channel = args[0] as usize;
+                let value = args[1] as f32;
+                let command_type = args[2] as i32;
+                let time = args[3] as i32;
+                let schedule_id = args[4] as i32;
+                let command = match command_type {
+                    0 => Some(ScheduledCommand::Pan(value)),
+                    1 => Some(ScheduledCommand::Volume(value)),
+                    2 => Some(ScheduledCommand::Frequency(value)),
+                    3 => Some(ScheduledCommand::Loop(value != 0.0)),
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    audio.schedule_update(ScheduledUpdate {
+                        schedule_id,
+                        time,
+                        channel,
+                        command,
+                    });
+                    if machine.debug {
+                        println!(
+                            "IO.audio.scheduleWithId {} {} {} {} {}",
+                            channel, time, command_type, value, schedule_id
+                        );
+                    }
+                } else if machine.debug {
+                    println!("IO.audio.scheduleWithId invalid type {}", command_type);
+                }
+            }
+        }
+        11 => {
+            //deschedule(scheduleId)
+            if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                let args = pop_stack(&mut machine.core, 1);
+                let schedule_id = args[0] as i32;
+                audio.deschedule(schedule_id);
+                if machine.debug {
+                    println!("IO.audio.deschedule {}", schedule_id);
+                }
+            }
+        }
+        12 => {
+            //nextScheduleId() -> i32
+            let id = if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                audio.next_schedule_id()
+            } else {
+                0
+            };
+            machine
+                .core
+                .stack
+                .push(DataType::Int32(id), &mut machine.core.srp);
+            if machine.debug {
+                println!("IO.audio.nextScheduleId -> {}", id);
+            }
+        }
+        13 => {
+            //scheduleDone(scheduleId) -> i32
+            let done = if let RawDevice::Audio(audio) = &mut machine.devices[device_id].contents {
+                let args = pop_stack(&mut machine.core, 1);
+                let schedule_id = args[0] as i32;
+                audio.schedule_done(schedule_id)
+            } else {
+                false
+            };
+            machine.core.stack.push(
+                DataType::Int32(if done { 1 } else { 0 }),
+                &mut machine.core.srp,
+            );
+            if machine.debug {
+                println!("IO.audio.scheduleDone -> {}", done);
+            }
+        }
         _ => {}
     }
 }
@@ -178,9 +257,11 @@ pub struct AudioDevice {
     old_vol: f32,
     master_volume: Arc<AtomicI32>,
     master_clock: Arc<AtomicI32>,
+    next_schedule_id: AtomicI32,
+    pending_schedule_counts: Arc<Mutex<HashMap<i32, i32>>>,
     device: Option<OutputDevice>,
     updates: Sender<(usize, ChannelUpdate)>,
-    scheduled_updates: Sender<ScheduledUpdate>,
+    scheduled_updates: Sender<ScheduledQueueMessage>,
 }
 impl std::fmt::Debug for AudioDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -196,7 +277,7 @@ impl std::fmt::Debug for AudioDevice {
 impl AudioDevice {
     pub fn new() -> AudioDevice {
         let (tx, rx) = channel::<(usize, ChannelUpdate)>();
-        let (scheduled_tx, scheduled_rx) = channel::<ScheduledUpdate>();
+        let (scheduled_tx, scheduled_rx) = channel::<ScheduledQueueMessage>();
         let mut a = AudioDevice {
             channels: mutex_channels(flatten_vec(vec![
                 gen_uninitialized_channels(gen_square_wave as WaveGenerator, 4, 10.0),
@@ -211,6 +292,8 @@ impl AudioDevice {
             old_vol: 1.0,
             master_volume: Arc::new(AtomicI32::new(100)),
             master_clock: Arc::new(AtomicI32::new(0)),
+            next_schedule_id: AtomicI32::new(1),
+            pending_schedule_counts: Arc::new(Mutex::new(HashMap::new())),
             device: None,
             updates: tx,
             scheduled_updates: scheduled_tx,
@@ -223,7 +306,26 @@ impl AudioDevice {
         //modify_channel_collection_item(id, &(self.channels), update);
     }
     pub fn schedule_update(&self, update: ScheduledUpdate) {
-        self.scheduled_updates.send(update).err();
+        {
+            let mut counts = self.pending_schedule_counts.lock().unwrap();
+            let entry = counts.entry(update.schedule_id).or_insert(0);
+            *entry += 1;
+        }
+        self.scheduled_updates
+            .send(ScheduledQueueMessage::Add(update))
+            .err();
+    }
+    pub fn deschedule(&self, schedule_id: i32) {
+        self.scheduled_updates
+            .send(ScheduledQueueMessage::Deschedule(schedule_id))
+            .err();
+    }
+    pub fn next_schedule_id(&self) -> i32 {
+        self.next_schedule_id.fetch_add(1, Relaxed)
+    }
+    pub fn schedule_done(&self, schedule_id: i32) -> bool {
+        let counts = self.pending_schedule_counts.lock().unwrap();
+        !counts.contains_key(&schedule_id)
     }
 
     pub fn set_master_volume(&self, volume: i32) {
@@ -232,7 +334,11 @@ impl AudioDevice {
     pub fn master_clock(&self) -> i32 {
         self.master_clock.load(Relaxed)
     }
-    pub fn run(&mut self, rx: Receiver<(usize, ChannelUpdate)>, scheduled_rx: Receiver<ScheduledUpdate>) {
+    pub fn run(
+        &mut self,
+        rx: Receiver<(usize, ChannelUpdate)>,
+        scheduled_rx: Receiver<ScheduledQueueMessage>,
+    ) {
         let params = OutputDeviceParameters {
             channels_count: 2,
             sample_rate: self.sample_rate as usize,
@@ -246,6 +352,7 @@ impl AudioDevice {
                     Arc::clone(&(self.channels)),
                     Arc::clone(&self.master_volume),
                     Arc::clone(&self.master_clock),
+                    Arc::clone(&self.pending_schedule_counts),
                     rx,
                     scheduled_rx,
                 ),
@@ -394,9 +501,16 @@ pub enum ChannelUpdate {
 
 #[derive(Debug, Clone)]
 struct ScheduledUpdate {
+    schedule_id: i32,
     time: i32,
     channel: usize,
     command: ScheduledCommand,
+}
+
+#[derive(Debug, Clone)]
+enum ScheduledQueueMessage {
+    Add(ScheduledUpdate),
+    Deschedule(i32),
 }
 
 #[derive(Debug, Clone)]
@@ -412,8 +526,9 @@ fn gen_wave(
     channels: ChannelCollection,
     master_volume: Arc<AtomicI32>,
     master_clock: Arc<AtomicI32>,
+    pending_schedule_counts: Arc<Mutex<HashMap<i32, i32>>>,
     rx: Receiver<(usize, ChannelUpdate)>,
-    scheduled_rx: Receiver<ScheduledUpdate>,
+    scheduled_rx: Receiver<ScheduledQueueMessage>,
 ) -> impl FnMut(&mut [f32]) {
     let mut channel_clocks: Vec<f32> = vec![0.0; channels.len()];
     let mut loaded_channels = Vec::with_capacity(10);
@@ -426,12 +541,30 @@ fn gen_wave(
                 channel_clocks[id] = 0.0;
             }
         }
-        for update in scheduled_rx.try_iter().take(50) {
-            let insert_at = scheduled
-                .iter()
-                .position(|existing| existing.time > update.time)
-                .unwrap_or(scheduled.len());
-            scheduled.insert(insert_at, update);
+        for message in scheduled_rx.try_iter().take(50) {
+            match message {
+                ScheduledQueueMessage::Add(update) => {
+                    let insert_at = scheduled
+                        .iter()
+                        .position(|existing| existing.time > update.time)
+                        .unwrap_or(scheduled.len());
+                    scheduled.insert(insert_at, update);
+                }
+                ScheduledQueueMessage::Deschedule(schedule_id) => {
+                    let before = scheduled.len();
+                    scheduled.retain(|update| update.schedule_id != schedule_id);
+                    let removed = (before - scheduled.len()) as i32;
+                    if removed > 0 {
+                        let mut counts = pending_schedule_counts.lock().unwrap();
+                        if let Some(count) = counts.get_mut(&schedule_id) {
+                            *count -= removed;
+                            if *count <= 0 {
+                                counts.remove(&schedule_id);
+                            }
+                        }
+                    }
+                }
+            }
         }
         loaded_channels.clear();
         for channel in channels.iter() {
@@ -445,6 +578,15 @@ fn gen_wave(
                     break;
                 }
                 let update = scheduled.remove(0);
+                {
+                    let mut counts = pending_schedule_counts.lock().unwrap();
+                    if let Some(count) = counts.get_mut(&update.schedule_id) {
+                        *count -= 1;
+                        if *count <= 0 {
+                            counts.remove(&update.schedule_id);
+                        }
+                    }
+                }
                 let channel_update = match update.command {
                     ScheduledCommand::Volume(value) => ChannelUpdate::Volume(value),
                     ScheduledCommand::Frequency(value) => ChannelUpdate::Frequency(value),

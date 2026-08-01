@@ -438,10 +438,7 @@ impl IrGen {
         None
     }
     pub fn compile(&mut self) {
-        self.incorperate_local_header(
-            self.header.clone(),
-            SourceLocation { line: 0, col: 0 },
-        );
+        self.incorperate_local_header(self.header.clone(), SourceLocation { line: 0, col: 0 });
         for stmt in self.input.clone().iter() {
             self.compile_statement(stmt.clone());
         }
@@ -637,13 +634,13 @@ impl IrGen {
                                     let val = self.compile_expression(return_expr, loc)?;
                                     if val.ty != ret.clone().ty {
                                         self.emitError(
-                                    loc,
-                                    &format!(
+                                            loc,
+                                            &format!(
                                         "Type mismatch, expected block to return {}, got {}",
                                         ret.clone().ty,
                                         val.ty
                                     ),
-                                );
+                                        );
                                     }
                                     self.emit_instruction(Command::Move(
                                         Value::Register(val),
@@ -708,7 +705,15 @@ impl IrGen {
                 }
             }
             Expression::Sizeof(ty) => {
-                let size = self.size_of(ty, loc)?;
+                let size = match ty {
+                    TypeKind::Pointer(inner) => match *inner {
+                        TypeKind::Struct(_) | TypeKind::Union(_) | TypeKind::Array(_, _) => {
+                            self.size_of(*inner, loc)?
+                        }
+                        _ => self.size_of(TypeKind::Pointer(inner), loc)?,
+                    },
+                    _ => self.size_of(ty, loc)?,
+                };
                 let out = self.alloc_get(TypeKind::Uint32)?;
                 self.emit_instruction(Command::Move(
                     Value::Immediate(Immediate {
@@ -964,8 +969,8 @@ impl IrGen {
                             self.emit_instruction(Command::Gt(left, right, self.get_register(out)?))
                         }
                         BinaryOperator::Le => {
-                            let tempA = self.alloc_get(outL.ty.clone())?;
-                            let tempB = self.alloc_get(outL.ty.clone())?;
+                            let tempA = self.alloc_get(TypeKind::Bool)?;
+                            let tempB = self.alloc_get(TypeKind::Bool)?;
                             self.emit_instruction(Command::Lt(
                                 left.clone(),
                                 right.clone(),
@@ -987,8 +992,8 @@ impl IrGen {
                         }
 
                         BinaryOperator::Ge => {
-                            let tempA = self.alloc_get(outL.ty.clone())?;
-                            let tempB = self.alloc_get(outL.ty.clone())?;
+                            let tempA = self.alloc_get(TypeKind::Bool)?;
+                            let tempB = self.alloc_get(TypeKind::Bool)?;
                             self.emit_instruction(Command::Gt(
                                 left.clone(),
                                 right.clone(),
@@ -1026,6 +1031,17 @@ impl IrGen {
                     }
                     UnaryOperator::Not => {
                         self.emit_instruction(Command::Not(value_l, out.clone()));
+                        self.deallocate_register(left.id);
+                    }
+                    UnaryOperator::LogicalNot => {
+                        self.emit_instruction(Command::Eq(
+                            value_l,
+                            Value::Immediate(Immediate {
+                                value: 0.0,
+                                ty: TypeKind::Bool,
+                            }),
+                            out.clone(),
+                        ));
                         self.deallocate_register(left.id);
                     }
                     UnaryOperator::Deref => {

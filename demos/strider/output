@@ -1,0 +1,674 @@
+warning: unused imports: `Executable` and `Library`
+ --> src/compiler/backend.rs:5:35
+  |
+5 | use crate::executable::{Bytecode, Executable, Fn, Library};
+  |                                   ^^^^^^^^^^      ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `super::lexer::OperatorKind`
+ --> src/compiler/ir.rs:1:5
+  |
+1 | use super::lexer::OperatorKind;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `read_to_string` and `self`
+  --> src/compiler/ir.rs:14:15
+   |
+14 | use std::fs::{self, read_to_string};
+   |               ^^^^  ^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+  --> src/compiler/ir.rs:15:5
+   |
+15 | use std::path::Path;
+   |     ^^^^^^^^^^^^^^^
+
+warning: unnecessary parentheses around method argument
+   --> src/compiler/ir.rs:959:53
+    |
+959 |                         let id = self.lookup_symbol((&sret_name.clone().unwrap()))?.id;
+    |                                                     ^                           ^
+    |
+    = note: `#[warn(unused_parens)]` on by default
+help: remove these parentheses
+    |
+959 -                         let id = self.lookup_symbol((&sret_name.clone().unwrap()))?.id;
+959 +                         let id = self.lookup_symbol(&sret_name.clone().unwrap())?.id;
+    |
+
+warning: unused import: `ffi::CString`
+  --> src/main.rs:14:5
+   |
+14 |     ffi::CString,
+   |     ^^^^^^^^^^^^
+
+warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
+    --> src/compiler/ir.rs:1222:27
+     |
+1222 |                     rand::thread_rng()
+     |                           ^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
+    --> src/compiler/ir.rs:1277:27
+     |
+1277 |                     rand::thread_rng()
+     |                           ^^^^^^^^^^
+
+warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
+    --> src/compiler/ir.rs:1337:35
+     |
+1337 | ...                   rand::thread_rng()
+     |                             ^^^^^^^^^^
+
+warning: use of deprecated function `rand::thread_rng`: Renamed to `rng`
+    --> src/compiler/ir.rs:1405:39
+     |
+1405 | ...                   rand::thread_rng()
+     |                             ^^^^^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:463:64
+    |
+463 |                         self.functions[self.loc.0].phys_owners.remove(&phys);
+    |                                                                ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:464:62
+    |
+464 |                         self.functions[self.loc.0].virt_locs.remove(&r_id);
+    |                                                              ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:690:48
+    |
+690 |             self.functions[func_idx].virt_locs.remove(&virt_id);
+    |                                                ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:814:48
+    |
+814 | ...                   func.virt_locs.remove(&prev_owner);
+    |                                      ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:820:30
+    |
+820 |             func.phys_owners.remove(&alias);
+    |                              ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:835:42
+    |
+835 |                         func.phys_owners.remove(&a);
+    |                                          ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:877:58
+    |
+877 |                     self.functions[func_idx].phys_owners.remove(&a);
+    |                                                          ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+   --> src/compiler/backend.rs:881:48
+    |
+881 |             self.functions[func_idx].virt_locs.remove(&virt_id);
+    |                                                ^^^^^^
+
+warning: use of deprecated method `indexmap::IndexMap::<K, V, S>::remove`: `remove` disrupts the map order -- use `swap_remove` or `shift_remove` for explicit behavior.
+    --> src/compiler/backend.rs:1005:54
+     |
+1005 |                 self.functions[func_idx].phys_owners.remove(&a);
+     |                                                      ^^^^^^
+
+warning: unused variable: `e`
+   --> src/compiler/ir.rs:413:39
+    |
+413 |             StatementKind::ImplictRet(e) => {
+    |                                       ^ help: if this is intentional, prefix it with an underscore: `_e`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `implict_ret`
+   --> src/compiler/ir.rs:419:41
+    |
+419 |             StatementKind::Block(stmts, implict_ret) => {
+    |                                         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_implict_ret`
+
+warning: unused variable: `loc`
+   --> src/compiler/ir.rs:461:64
+    |
+461 |     fn compile_struct(&mut self, structDef: StructDeclaration, loc: SourceLocation) {
+    |                                                                ^^^ help: if this is intentional, prefix it with an underscore: `_loc`
+
+warning: unused variable: `loc`
+   --> src/compiler/ir.rs:464:61
+    |
+464 |     fn compile_union(&mut self, unionDef: UnionDeclaration, loc: SourceLocation) {
+    |                                                             ^^^ help: if this is intentional, prefix it with an underscore: `_loc`
+
+warning: unused variable: `loc`
+   --> src/compiler/ir.rs:467:58
+    |
+467 |     fn compile_enum(&mut self, enumDef: EnumDeclaration, loc: SourceLocation) {
+    |                                                          ^^^ help: if this is intentional, prefix it with an underscore: `_loc`
+
+warning: unused variable: `loc`
+   --> src/compiler/ir.rs:470:63
+    |
+470 |     fn compile_function(&mut self, func: FunctionDeclaration, loc: SourceLocation) {
+    |                                                               ^^^ help: if this is intentional, prefix it with an underscore: `_loc`
+
+warning: unused variable: `variant_type`
+    --> src/compiler/ir.rs:1402:37
+     |
+1402 |                         if let Some(variant_type) = variant_type {
+     |                                     ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_variant_type`
+
+warning: unused variable: `count`
+    --> src/compiler/ir.rs:1569:48
+     |
+1569 |                     if let TypeKind::Array(ty, count) = *ptr {
+     |                                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_count`
+
+warning: unused variable: `key`
+    --> src/compiler/ir.rs:1781:81
+     |
+1781 |                     let offset = type_def.iter().enumerate().fold(0, |acc, (i, (key, ty))| {
+     |                                                                                 ^^^ help: if this is intentional, prefix it with an underscore: `_key`
+
+warning: unused variable: `op`
+    --> src/compiler/ir.rs:2051:39
+     |
+2051 |             if let TypeKind::Optional(op) = return_ty.clone() {
+     |                                       ^^ help: if this is intentional, prefix it with an underscore: `_op`
+
+warning: field `0` is never read
+  --> src/compiler/backend.rs:50:10
+   |
+50 |     Move(CommandType),
+   |     ---- ^^^^^^^^^^^
+   |     |
+   |     field in this variant
+   |
+   = note: `OpCode` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` on by default
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+50 -     Move(CommandType),
+50 +     Move(()),
+   |
+
+warning: field `sret` is never read
+   --> src/compiler/backend.rs:115:9
+    |
+104 | pub struct Function {
+    |            -------- field in this struct
+...
+115 |     pub sret: bool,
+    |         ^^^^
+    |
+    = note: `Function` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `start` is never read
+  --> src/compiler/ir.rs:25:9
+   |
+22 | pub struct Register {
+   |            -------- field in this struct
+...
+25 |     pub start: [usize; 3],
+   |         ^^^^^
+   |
+   = note: `Register` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `1` is never read
+  --> src/compiler/ir.rs:68:17
+   |
+68 |     Call(Value, u8),
+   |     ----        ^^
+   |     |
+   |     field in this variant
+   |
+   = note: `Command` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+   |
+68 -     Call(Value, u8),
+68 +     Call(Value, ()),
+   |
+
+warning: field `header` is never read
+   --> src/compiler/ir.rs:125:5
+    |
+123 | pub struct IrGen {
+    |            ----- field in this struct
+124 |     input: Vec<Statement>,
+125 |     header: Header,
+    |     ^^^^^^
+    |
+    = note: `IrGen` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: method `unwrap_reg_value` is never used
+    --> src/compiler/ir.rs:2393:8
+     |
+138  | impl IrGen {
+     | ---------- method in this implementation
+...
+2393 |     fn unwrap_reg_value(&self, val: Value) -> Option<Register> {
+     |        ^^^^^^^^^^^^^^^^
+
+warning: field `jump` is never read
+    --> src/compiler/ir.rs:2477:5
+     |
+2475 | struct LoopStackEntry {
+     |        -------------- field in this struct
+2476 |     condition: usize,
+2477 |     jump: usize,
+     |     ^^^^
+     |
+     = note: `LoopStackEntry` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: field `tokens` is never read
+ --> src/compiler/lexer.rs:5:5
+  |
+3 | pub struct Lexer {
+  |            ----- field in this struct
+4 |     input: InputStream,
+5 |     tokens: Vec<Token>,
+  |     ^^^^^^
+
+warning: associated function `new` is never used
+   --> src/compiler/lexer.rs:395:8
+    |
+394 | impl InputStream {
+    | ---------------- associated function in this implementation
+395 |     fn new(input: String) -> Self {
+    |        ^^^
+
+warning: method `display` is never used
+   --> src/compiler/lexer.rs:467:12
+    |
+460 | impl Token {
+    | ---------- method in this implementation
+...
+467 |     pub fn display(&self, src: &str) -> String {
+    |            ^^^^^^^
+
+warning: method `is_alias` is never used
+  --> src/compiler/parser.rs:59:8
+   |
+24 | impl TypeTable {
+   | -------------- method in this implementation
+...
+59 |     fn is_alias(&self, name: &str) -> bool {
+   |        ^^^^^^^^
+
+warning: methods `set_tile` and `set_render_type` are never used
+   --> src/devices/gfx.rs:525:8
+    |
+517 | impl BGLayer {
+    | ------------ methods in this implementation
+...
+525 |     fn set_tile(&mut self, tileId: usize, loc: Point) {
+    |        ^^^^^^^^
+...
+531 |     fn set_render_type(&mut self, render_type: RenderType) {
+    |        ^^^^^^^^^^^^^^^
+
+warning: methods `add_tile`, `add_tile_with_id`, `add_sprite`, `set_tile`, and `get_tile` are never used
+   --> src/devices/gfx.rs:667:12
+    |
+620 | impl GraphicsSystem {
+    | ------------------- methods in this implementation
+...
+667 |     pub fn add_tile(&mut self, tile: Tile) {
+    |            ^^^^^^^^
+...
+670 |     pub fn add_tile_with_id(&mut self, id: u8, tile: Tile) {
+    |            ^^^^^^^^^^^^^^^^
+...
+695 |     pub fn add_sprite(&mut self, mut sprite: Sprite) -> usize {
+    |            ^^^^^^^^^^
+...
+706 |     pub fn set_tile(&mut self, loc: Point, layer: u8, tile_id: usize) {
+    |            ^^^^^^^^
+...
+711 |     pub fn get_tile(&mut self, loc: Point, layer: u8) {
+    |            ^^^^^^^^
+
+warning: methods `set_tile` and `get_tile` are never used
+   --> src/devices/gfx.rs:852:8
+    |
+843 | impl TileMap {
+    | ------------ methods in this implementation
+...
+852 |     fn set_tile(&mut self, loc: Point, tileId: usize) {
+    |        ^^^^^^^^
+...
+855 |     fn get_tile(&self, loc: Point) -> usize {
+    |        ^^^^^^^^
+
+warning: method `add_tile` is never used
+    --> src/devices/gfx.rs:1062:8
+     |
+996  | impl TileAtlas {
+     | -------------- method in this implementation
+...
+1062 |     fn add_tile(&mut self, tile: Tile) -> usize {
+     |        ^^^^^^^^
+
+warning: associated items `to_file`, `from_file`, and `set_loader` are never used
+   --> src/executable.rs:270:19
+    |
+242 | impl Executable {
+    | --------------- associated items in this implementation
+...
+270 |     pub(crate) fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+    |                   ^^^^^^^
+...
+275 |     pub(crate) fn from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    |                   ^^^^^^^^^
+...
+322 |     fn set_loader(&mut self, loader: Vec<i16>) {
+    |        ^^^^^^^^^^
+
+warning: function `gen_rotation_matrix` is never used
+  --> src/util.rs:33:8
+   |
+33 | pub fn gen_rotation_matrix(degrees: f32) -> Matrix {
+   |        ^^^^^^^^^^^^^^^^^^^
+
+warning: type alias `CoreState` is never used
+    --> src/vm.rs:1034:6
+     |
+1034 | type CoreState = (i16, i16, i16, i16, i16, f32, f32, usize);
+     |      ^^^^^^^^^
+
+warning: variable `structDef` should have a snake case name
+   --> src/compiler/ir.rs:461:34
+    |
+461 |     fn compile_struct(&mut self, structDef: StructDeclaration, loc: SourceLocation) {
+    |                                  ^^^^^^^^^ help: convert the identifier to snake case: `struct_def`
+    |
+    = note: `#[warn(non_snake_case)]` on by default
+
+warning: variable `unionDef` should have a snake case name
+   --> src/compiler/ir.rs:464:33
+    |
+464 |     fn compile_union(&mut self, unionDef: UnionDeclaration, loc: SourceLocation) {
+    |                                 ^^^^^^^^ help: convert the identifier to snake case: `union_def`
+
+warning: variable `enumDef` should have a snake case name
+   --> src/compiler/ir.rs:467:32
+    |
+467 |     fn compile_enum(&mut self, enumDef: EnumDeclaration, loc: SourceLocation) {
+    |                                ^^^^^^^ help: convert the identifier to snake case: `enum_def`
+
+warning: variable `fieldTy` should have a snake case name
+   --> src/compiler/ir.rs:635:41
+    |
+635 | ...                   let fieldTy = utype.get(&property);
+    |                           ^^^^^^^ help: convert the identifier to snake case: `field_ty`
+
+warning: variable `fieldTy` should have a snake case name
+   --> src/compiler/ir.rs:636:49
+    |
+636 | ...                   if let Some(fieldTy) = fieldTy {
+    |                                   ^^^^^^^ help: convert the identifier to snake case: `field_ty`
+
+warning: variable `outL` should have a snake case name
+   --> src/compiler/ir.rs:762:25
+    |
+762 |                     let outL = self.compile_expression(*left.clone(), loc)?;
+    |                         ^^^^ help: convert the identifier to snake case: `out_l`
+
+warning: variable `outR` should have a snake case name
+   --> src/compiler/ir.rs:763:25
+    |
+763 |                     let outR = self.compile_expression(*right.clone(), loc)?;
+    |                         ^^^^ help: convert the identifier to snake case: `out_r`
+
+warning: variable `tempA` should have a snake case name
+   --> src/compiler/ir.rs:863:33
+    |
+863 | ...                   let tempA = self.alloc_get(outL.ty.clone())?;
+    |                           ^^^^^ help: convert the identifier to snake case: `temp_a`
+
+warning: variable `tempB` should have a snake case name
+   --> src/compiler/ir.rs:864:33
+    |
+864 | ...                   let tempB = self.alloc_get(outL.ty.clone())?;
+    |                           ^^^^^ help: convert the identifier to snake case: `temp_b`
+
+warning: variable `tempA` should have a snake case name
+   --> src/compiler/ir.rs:886:33
+    |
+886 | ...                   let tempA = self.alloc_get(outL.ty.clone())?;
+    |                           ^^^^^ help: convert the identifier to snake case: `temp_a`
+
+warning: variable `tempB` should have a snake case name
+   --> src/compiler/ir.rs:887:33
+    |
+887 | ...                   let tempB = self.alloc_get(outL.ty.clone())?;
+    |                           ^^^^^ help: convert the identifier to snake case: `temp_b`
+
+warning: variable `fieldTy` should have a snake case name
+    --> src/compiler/ir.rs:1922:33
+     |
+1922 | ...                   let fieldTy = fields.get(&prop).clone();
+     |                           ^^^^^^^ help: convert the identifier to snake case: `field_ty`
+
+warning: variable `fieldTy` should have a snake case name
+    --> src/compiler/ir.rs:1923:41
+     |
+1923 | ...                   if let Some(fieldTy) = fieldTy {
+     |                                   ^^^^^^^ help: convert the identifier to snake case: `field_ty`
+
+warning: variable `currLoop` should have a snake case name
+    --> src/compiler/ir.rs:2276:13
+     |
+2276 |         let currLoop = self.get_last_loop();
+     |             ^^^^^^^^ help: convert the identifier to snake case: `curr_loop`
+
+warning: method `emitError` should have a snake case name
+    --> src/compiler/ir.rs:2399:8
+     |
+2399 |     fn emitError(&self, loc: SourceLocation, message: &str) {
+     |        ^^^^^^^^^ help: convert the identifier to snake case: `emit_error`
+
+warning: method `matchTk` should have a snake case name
+   --> src/compiler/lexer.rs:421:8
+    |
+421 |     fn matchTk(&mut self, expected: char) -> bool {
+    |        ^^^^^^^ help: convert the identifier to snake case: `match_tk`
+
+warning: method `parseStatement` should have a snake case name
+   --> src/compiler/parser.rs:278:8
+    |
+278 |     fn parseStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_statement`
+
+warning: method `parseExpressionStatement` should have a snake case name
+   --> src/compiler/parser.rs:316:8
+    |
+316 |     fn parseExpressionStatement(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_expression_statement`
+
+warning: method `parseDefer` should have a snake case name
+   --> src/compiler/parser.rs:334:8
+    |
+334 |     fn parseDefer(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^ help: convert the identifier to snake case: `parse_defer`
+
+warning: method `parseMatch` should have a snake case name
+   --> src/compiler/parser.rs:343:8
+    |
+343 |     fn parseMatch(&mut self) -> Option<Expression> {
+    |        ^^^^^^^^^^ help: convert the identifier to snake case: `parse_match`
+
+warning: method `parsePattern` should have a snake case name
+   --> src/compiler/parser.rs:364:8
+    |
+364 |     fn parsePattern(&mut self) -> Option<Pattern> {
+    |        ^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_pattern`
+
+warning: method `parseTypeDecl` should have a snake case name
+   --> src/compiler/parser.rs:473:8
+    |
+473 |     fn parseTypeDecl(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_type_decl`
+
+warning: method `parseBreakStatement` should have a snake case name
+   --> src/compiler/parser.rs:482:8
+    |
+482 |     fn parseBreakStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_break_statement`
+
+warning: method `parseContinueStatement` should have a snake case name
+   --> src/compiler/parser.rs:493:8
+    |
+493 |     fn parseContinueStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_continue_statement`
+
+warning: method `parseEnumDeclaration` should have a snake case name
+   --> src/compiler/parser.rs:504:8
+    |
+504 |     fn parseEnumDeclaration(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_enum_declaration`
+
+warning: method `parseStructDeclaration` should have a snake case name
+   --> src/compiler/parser.rs:526:8
+    |
+526 |     fn parseStructDeclaration(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_struct_declaration`
+
+warning: method `parseUnionDeclaration` should have a snake case name
+   --> src/compiler/parser.rs:548:8
+    |
+548 |     fn parseUnionDeclaration(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_union_declaration`
+
+warning: method `parseFunctionDeclaration` should have a snake case name
+   --> src/compiler/parser.rs:570:8
+    |
+570 |     fn parseFunctionDeclaration(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_function_declaration`
+
+warning: method `parseImportDeclaration` should have a snake case name
+   --> src/compiler/parser.rs:599:8
+    |
+599 |     fn parseImportDeclaration(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_import_declaration`
+
+warning: method `parseWhileStatement` should have a snake case name
+   --> src/compiler/parser.rs:647:8
+    |
+647 |     fn parseWhileStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_while_statement`
+
+warning: method `parseForStatement` should have a snake case name
+   --> src/compiler/parser.rs:660:8
+    |
+660 |     fn parseForStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_for_statement`
+
+warning: method `parseReturnStatement` should have a snake case name
+   --> src/compiler/parser.rs:690:8
+    |
+690 |     fn parseReturnStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_return_statement`
+
+warning: method `parseIfStatement` should have a snake case name
+   --> src/compiler/parser.rs:703:8
+    |
+703 |     fn parseIfStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_if_statement`
+
+warning: method `parseBlockStatement` should have a snake case name
+   --> src/compiler/parser.rs:727:8
+    |
+727 |     fn parseBlockStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_block_statement`
+
+warning: method `parseArray` should have a snake case name
+   --> src/compiler/parser.rs:757:8
+    |
+757 |     fn parseArray(&mut self) -> Option<Expression> {
+    |        ^^^^^^^^^^ help: convert the identifier to snake case: `parse_array`
+
+warning: method `parseExpression` should have a snake case name
+   --> src/compiler/parser.rs:796:8
+    |
+796 |     fn parseExpression(&mut self) -> Option<Expression> {
+    |        ^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_expression`
+
+warning: method `parseFnCall` should have a snake case name
+   --> src/compiler/parser.rs:970:8
+    |
+970 |     fn parseFnCall(&mut self, left: Expression) -> Option<Expression> {
+    |        ^^^^^^^^^^^ help: convert the identifier to snake case: `parse_fn_call`
+
+warning: method `parseLetStatement` should have a snake case name
+   --> src/compiler/parser.rs:982:8
+    |
+982 |     fn parseLetStatement(&mut self) -> Option<Statement> {
+    |        ^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_let_statement`
+
+warning: method `matchIdentifier` should have a snake case name
+    --> src/compiler/parser.rs:1011:8
+     |
+1011 |     fn matchIdentifier(&mut self) -> Option<String> {
+     |        ^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `match_identifier`
+
+warning: method `parseIdentifier` should have a snake case name
+    --> src/compiler/parser.rs:1024:8
+     |
+1024 |     fn parseIdentifier(&mut self, ident: String) -> Option<Expression> {
+     |        ^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `parse_identifier`
+
+warning: method `matchType` should have a snake case name
+    --> src/compiler/parser.rs:1102:8
+     |
+1102 |     fn matchType(&mut self) -> Option<TypeKind> {
+     |        ^^^^^^^^^ help: convert the identifier to snake case: `match_type`
+
+warning: method `matchInteger` should have a snake case name
+    --> src/compiler/parser.rs:1163:8
+     |
+1163 |     fn matchInteger(&mut self) -> Option<i32> {
+     |        ^^^^^^^^^^^^ help: convert the identifier to snake case: `match_integer`
+
+warning: method `matchToken` should have a snake case name
+    --> src/compiler/parser.rs:1172:8
+     |
+1172 |     fn matchToken(&mut self, kind: TokenKind) -> Option<&Token> {
+     |        ^^^^^^^^^^ help: convert the identifier to snake case: `match_token`
+
+warning: method `emitError` should have a snake case name
+    --> src/compiler/parser.rs:1184:8
+     |
+1184 |     fn emitError(&self, message: &str) {
+     |        ^^^^^^^^^ help: convert the identifier to snake case: `emit_error`
+
+warning: variable `tileId` should have a snake case name
+   --> src/devices/gfx.rs:525:28
+    |
+525 |     fn set_tile(&mut self, tileId: usize, loc: Point) {
+    |                            ^^^^^^ help: convert the identifier to snake case: `tile_id`
+
+warning: structure field `queuedPixels` should have a snake case name
+   --> src/devices/gfx.rs:572:5
+    |
+572 |     queuedPixels: Vec<(usize, usize, u32)>,
+    |     ^^^^^^^^^^^^ help: convert the identifier to snake case: `queued_pixels`
+
+warning: variable `tileId` should have a snake case name
+   --> src/devices/gfx.rs:852:40
+    |
+852 |     fn set_tile(&mut self, loc: Point, tileId: usize) {
+    |                                        ^^^^^^ help: convert the identifier to snake case: `tile_id`
+
+warning: `Corallium` (bin "Corallium") generated 94 warnings (run `cargo fix --bin "Corallium"` to apply 6 suggestions)
+    Finished `release` profile [optimized] target(s) in 1.14s
+     Running `/home/darksystem/Projects/micro-16/target/release/Corallium run --file strider.coral --link linked`

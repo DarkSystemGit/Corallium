@@ -5,7 +5,9 @@ use crate::executable::Bytecode::{
 };
 use crate::util::*;
 use crate::vm::CommandType;
-use crate::vm::CommandType::{Add, IO, Jump, Load, Mov, Push, R1, R2, R3};
+use crate::vm::CommandType::{
+    Add, AddEx, EX1, EX2, IO, Jump, Load, LoadEx, Mov, Pop, Push, PushEx, R1, R2, R3, R4, Sub,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -237,9 +239,16 @@ impl ConstantTable {
 //-bytecode sector count
 //-data len
 //-data sector count
+//-logical sector offset
+//-first code sector offset
 //bytecode
 //data
 impl Executable {
+    const LOADER_LEN: i16 = 512;
+    const HEADER_LEN: usize = 9;
+    const INSERTION_JUMP_LEN: usize = 5;
+    const BOOT_WORDS: i32 = 1024;
+
     pub(crate) fn new() -> Executable {
         Executable {
             constants: ConstantTable::new(),
@@ -263,8 +272,8 @@ impl Executable {
             //      next_mem+=i32::MAX
             //  }
             //}
-            loader: Self::default_loader(512, 6),
-            max_loader_len: 512,
+            loader: Self::default_loader(Self::LOADER_LEN, Self::HEADER_LEN as i16),
+            max_loader_len: Self::LOADER_LEN,
         }
     }
     pub(crate) fn to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
@@ -280,43 +289,42 @@ impl Executable {
     fn default_loader(max_loader_len: i16, header_len: i16) -> Vec<i16> {
         let mut f = Fn::new("loader".to_string(), vec![]);
         f.symbol_enabled = false;
+        #[rustfmt::skip]
         f.add_block(
-            vec![
-                Command(Push),
-                Int(0), //dest
-                Command(Push),
-                Int(1), //count
-                Command(Push),
-                Int(0), //start sector,
-                Command(IO),
-                Int(0),
-                Int(2), //loadSectors,
-                Command(Load),
-                Int(max_loader_len + 3),
-                Register(R1), //exec::bytecode_sector_count,
-                Command(Load),
-                Int(max_loader_len + 1),
-                Register(R2), //exec::base_sector
-                Command(Load),
-                Int(max_loader_len + 5),
-                Register(R3), //exec::data_sector_count
-                Command(Add),
-                Register(R1),
-                Register(R3), //total sectors
-                Command(Push),
-                Int(0), //dest
-                Command(Push),
-                Register(R1), //count
-                Command(Push),
-                Register(R2), //start sector
-                Command(IO),
-                Int(0),
-                Int(2), //loadSectors
-                Command(Jump),
-                Int(max_loader_len + header_len),
-            ],
-            true,
-        );
+                   vec![
+                       Command(LoadEx), Int(max_loader_len + 7), Register(EX2), // FCSO
+                       Command(Load),   Int(max_loader_len + 6), Register(R3),  // LSO
+                       Command(Load),   Int(max_loader_len + 1), Register(R2),  // base sector
+
+                       Command(Add),    Register(R2),  Register(R3),
+                       Command(AddEx),  Register(EX2), Int32(Self::BOOT_WORDS),
+
+                       Command(Push), Int(Self::BOOT_WORDS as i16),
+                       Command(PushEx),   Register(EX1),
+                       Command(Push),   Register(R1),
+
+                       Command(IO),     Int(0),        Int(4),
+
+                       Command(Pop),    Register(EX1),
+                       Command(AddEx),  Register(EX1), Int32(Self::BOOT_WORDS),
+                       Command(PushEx), Register(EX1), // destination for later sectors
+
+                       Command(Load),   Int(max_loader_len + 3), Register(R1), // code sector count
+                       Command(Load),   Int(max_loader_len + 5), Register(R3), // data sector count
+                       Command(Add),    Register(R1),            Register(R3), // total sectors
+                       Command(Sub),    Register(R1),            Int(1),       // remaining sectors
+                       Command(Push),   Register(R1),
+
+                       Command(Load),   Int(max_loader_len + 1), Register(R2),
+                       Command(Add),    Register(R2),            Int(1),
+                       Command(Add),    Register(R1),            Register(R4),
+                       Command(Push),   Register(R1),
+                       Command(IO),     Int(0),                  Int(2),
+                       Command(Jump),   Int(max_loader_len + header_len),
+                   ],
+                   true,
+               );
+
         f.build(0, &HashMap::new(), 0, &ConstantTable::new(), false)
     }
     fn set_loader(&mut self, loader: Vec<i16>) {
@@ -337,14 +345,12 @@ impl Executable {
     pub(crate) fn build(mut self, mut offset: usize, disk: &mut Disk, debug: bool) {
         let mut bytecode: Vec<i16> = vec![];
         let mut fn_map: HashMap<String, usize> = HashMap::new();
-        let header_len = 6;
-        let insertion_jump_len = 5;
         //loader
-        offset += self.max_loader_len as usize - 1;
-        //headers
-        offset += header_len + insertion_jump_len;
+        offset += self.max_loader_len as usize;
+        //headers + insertion jump
+        offset += Self::HEADER_LEN + Self::INSERTION_JUMP_LEN;
         let mut main_loc = 0;
-        let data_sec = self.fns.iter_mut().fold(offset + 1, |acc, func| {
+        let data_sec = self.fns.iter_mut().fold(offset, |acc, func| {
             if func.name == "main" {
                 main_loc = acc;
             }
@@ -368,7 +374,7 @@ impl Executable {
             bytecode,
             offset,
             main_loc,
-            header_len + insertion_jump_len,
+            Self::HEADER_LEN + Self::INSERTION_JUMP_LEN,
             debug,
             self.constants.serialize(data_sec),
         );
@@ -439,7 +445,7 @@ impl Executable {
                 entrypoint,
             );
         }
-        //[mem offset,base sector,bytecode len,bytecode sector count, data len, data sector count]
+        //[mem offset,base sector,bytecode len,bytecode sector count, data len, data sector count, LSO, FCSO]
         let headers = vec![
             offset - header_len,
             ((offset - header_len) as f32 / i32::MAX as f32).floor() as usize,
@@ -447,7 +453,11 @@ impl Executable {
             code_sectors,
             data.len(),
             data_sectors,
+            0,
+            0,
+            0,
         ];
+
         let mut insertion_jump = vec![pack_command(CommandType::Jump)];
         insertion_jump.extend_from_slice(&pack_i32(entrypoint as i32));
         let executable = flatten_vec(vec![
@@ -460,6 +470,7 @@ impl Executable {
         let base_sector = (offset as f32 / i32::MAX as f32).floor() as usize;
         let bsector_offset = (offset as f32 % i32::MAX as f32) as usize;
         let data_sector_count = (data.len() as f32 / i32::MAX as f32).ceil() as usize;
+
         for i in base_sector..code_sectors {
             if i == base_sector {
                 let insert_len = match executable.len() < i32::MAX as usize {
@@ -504,11 +515,10 @@ impl Executable {
                 data: data[data_start..data_end].to_vec(),
             };
         }
+
         let mut loader = self.loader.clone();
         resize_vec(self.max_loader_len as usize, &mut loader, 0);
-        disk[0]
-            .data
-            .splice(0..(self.max_loader_len - 1) as usize, loader);
+        disk[0].data.splice(0..self.max_loader_len as usize, loader);
     }
 }
 

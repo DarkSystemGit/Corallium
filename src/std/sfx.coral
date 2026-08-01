@@ -4,6 +4,7 @@ import "mem.coral";
 import "conv.coral";
 import "serial.h";
 struct SfxInfo{
+    id: i32,
     events: i32,
     len: i32
 }
@@ -31,12 +32,27 @@ fn read_f32(words: [i16], word_offset: i32) -> f32 {
 fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo {
 
     let base: i32 = match start_frame {
-        Some(v) -> v,
+        Some(v) -> v+audio::masterClock(),
         None -> audio::masterClock()
     };
+    let schedule_id: i32 = audio::nextScheduleId();
+    return play_with_id(file, base, schedule_id);
+}
+
+fn stop_sfx(info: SfxInfo) -> void {
+    audio::deschedule(info.id);
+    return;
+}
+
+fn done(info: SfxInfo) -> bool {
+    return (audio::scheduleDone(info.id) != (0 as i32));
+}
+
+fn play_with_id(file: fs::FileBuf, base: i32, schedule_id: i32) -> SfxInfo {
     let words: [i16] = file.buf as [i16];
     let cursor: i32 = 24 as i32;
     let info: SfxInfo = SfxInfo{
+        id: schedule_id,
         events: 0 as i32,
         len: 0 as i32
     };
@@ -54,9 +70,9 @@ fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo {
             _ -> count_raw as i32
         };
 
-        audio::schedule(ch, base, 0, pan);
-        audio::schedule(ch, base, 1, 0.0);
-        audio::schedule(ch, base, 2, 0.0);
+        audio::scheduleWithId(ch, base, 0, pan, schedule_id);
+        audio::scheduleWithId(ch, base, 1, 0.0, schedule_id);
+        audio::scheduleWithId(ch, base, 2, 0.0, schedule_id);
         info.events = info.events + (3 as i32);
 
         for (let ev: i32 = 0 as i32; ev < count; ev = ev + (1 as i32)) {
@@ -79,8 +95,8 @@ fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo {
             let at: i32 = base + (timestamp_ms * (32 as i32));
             let vol: f32 = (vol_clamped as f32) * (10.0 / 32767.0);
 
-            audio::schedule(ch, at, 2, freq);
-            audio::schedule(ch, at, 1, vol);
+            audio::scheduleWithId(ch, at, 2, freq, schedule_id);
+            audio::scheduleWithId(ch, at, 1, vol, schedule_id);
             info.events = info.events + (2 as i32);
             if (timestamp_ms > info.len) {
                 info.len = timestamp_ms;
@@ -90,18 +106,6 @@ fn play(file: fs::FileBuf, start_frame: i32?) -> SfxInfo {
     };
 
     return info;
-}
-
-fn play_now(file: fs::FileBuf) -> SfxInfo {
-    return play(file, None);
-}
-
-fn stop() -> void {
-    let now: i32 = audio::masterClock();
-    for (let ch: i16 = 0; ch < 8; ch = ch + 1) {
-        audio::schedule(ch, now, 1, 0.0);
-    };
-    return;
 }
 
 fn free(file: fs::FileBuf) -> void {

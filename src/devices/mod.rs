@@ -45,3 +45,40 @@ pub fn get_device_list() -> Vec<Device> {
         },
     ]
 }
+pub fn get_reset_device_list(gfx: RawDevice, disk: RawDevice) -> Vec<Device> {
+    // Reuse the provided display and disk contents by taking ownership of
+    // the supplied RawDevice values.
+    let display = match gfx {
+        RawDevice::Graphics(gs) => gs.display,
+        _ => panic!("internal error fetching display"),
+    };
+    let disk_contents = match disk {
+        RawDevice::Disk(d) => d,
+        _ => panic!("internal error fetching disk"),
+    };
+    vec![
+        Device {
+            driver: disk::driver,
+            contents: RawDevice::Disk(disk_contents),
+        },
+        Device {
+            driver: audio::driver,
+            contents: RawDevice::Audio(AudioDevice::new()),
+        },
+        Device {
+            driver: clock::driver,
+            contents: RawDevice::Clock(Clock::new()),
+        },
+        Device {
+            driver: gfx::driver,
+            contents: RawDevice::Graphics(GraphicsSystem::new_with_display(
+                display,
+                [320, 240],
+            )),
+        },
+        Device {
+            driver: serial::driver,
+            contents: RawDevice::Serial,
+        },
+    ]
+}

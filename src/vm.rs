@@ -560,7 +560,7 @@ fn exec_bytecode(machine: &mut Machine) {
         }
         CommandType::Exit => {
             //exit()
-            machine.on = false;
+            machine.reset = true;
             if machine.debug {
                 println!("Exit");
             }
@@ -775,6 +775,7 @@ pub struct Machine {
     debug_console: bool,
     pub freq: (u64, Instant),
     pub last_cycle: Instant,
+    pub reset: bool,
 }
 impl Machine {
     pub fn new(debug: bool) -> Machine {
@@ -787,6 +788,7 @@ impl Machine {
             freq: (0, Instant::now()),
             last_cycle: Instant::now(),
             debug_console: debug,
+            reset: false,
         };
         m
     }
@@ -840,6 +842,28 @@ impl Machine {
         //let mut debug_console = true;
         let mut breakpoints = Vec::new();
         while self.on {
+            if (self.reset) {
+                self.reset = false;
+                self.core = Core::new();
+                self.memory = Memory::new(16 * 1024 * 1024);
+                let gfx = std::mem::replace(&mut self.devices[3].contents, RawDevice::Serial);
+                let disk = std::mem::replace(&mut self.devices[0].contents, RawDevice::Serial);
+                self.devices = devices::get_reset_device_list(gfx, disk);
+                if let RawDevice::Disk(disk) = &mut self.devices[0].contents {
+                    let boot_words = 1024.min(disk[0].data.len());
+                    if boot_words > 0 {
+                        self.memory.write_range(
+                            0..boot_words,
+                            disk[0].data[0..boot_words].to_vec(),
+                            &mut self.core,
+                        );
+                    } else {
+                        println!("Disk entrypoint sector is empty");
+                    }
+                } else {
+                    println!("No Disk Plugged In");
+                }
+            }
             let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
                 if self.debug && self.debug_console || (breakpoints.contains(&self.core.ip)) {
                     if breakpoints.contains(&self.core.ip) {

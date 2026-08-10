@@ -1,0 +1,430 @@
+import <fs>;
+import <serial>;
+import <gfx>;
+import <audio>;
+import <clock>;
+import <mem>;
+import <cbmp>;
+import <sfx>;
+fn main()->void{
+    let boot_screen_file: fs::FileBuf=fs::openFile("linked/boot_screen.bitmap");
+    fs::readFile(boot_screen_file,0 as i32,None);
+    let seed_ptr: &i32 = init_rand();
+    let bitmap: gfx::Bitmap=gfx::Bitmap{
+        x: 0,
+        y: 0,
+        priority: 0,
+        width: 320,
+        length: 240,
+        data: boot_screen_file.buf as [i32]
+    };
+    let startup: fs::FileBuf=fs::openFile("linked/startup.raw");
+    fs::readFile(startup, 0 as i32, None);
+    audio::loadSound(9,startup.buf as [f32],(startup.len));
+    fs::closeFile(startup);
+    gfx::registerBitmap(bitmap);
+    for(let i: i16=0;i<75;i=i+1){
+        gfx::render();
+    };
+    gfx::removeBitmap(bitmap);
+    fs::closeFile(boot_screen_file);
+    let atlas_file: fs::FileBuf=fs::openFile("linked/atlas.cbmp");
+    let atlas_file: fs::FileBuf=fs::openFile("linked/atlas.cbmp");
+    fs::readFile(atlas_file,0 as i32,None);
+    let source: gfx::Bitmap = cbmp::from_file(atlas_file);
+    let atlas: [i16] = cbmp::bitmap_to_atlas(source, 115, 0, 0);
+    gfx::registerAtlas(atlas);
+    let theme_file: fs::FileBuf=fs::openFile("linked/flap.csfx");
+    fs::readFile(theme_file,0 as i32,None);
+    let hurt_file: fs::FileBuf=fs::openFile("linked/hurt.raw");
+    fs::readFile(hurt_file, 0 as i32, None);
+    let coin_file: fs::FileBuf=fs::openFile("linked/coin.raw");
+    fs::readFile(coin_file, 0 as i32, None);
+    audio::masterVolume(50 as i32);
+    let track_vol: f32=0.04;
+    let theme_sfx: sfx::SfxInfo = sfx::play(theme_file, None,Some(track_vol));
+    let bgTilemap: [i16] = [
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,91,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,91,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,90,
+        97,98,97,98,97,98,97,98,97,98,97,98,97,98,97,98,97,98,97,98,
+        106,107,106,107,106,107,106,107,106,107,106,107,106,107,106,107,106,107,106,107,
+        104,105,104,105,104,105,104,105,104,105,104,105,104,105,104,105,104,105,104,105,
+        88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,88,
+        89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,
+        89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89
+    ];
+    let uiBgTm: [i16] = [
+        0,100,100,100,100,100,100,100,100,100,100,0,
+        109,108,108,108,108,108,108,108,108,108,108,110,
+        0,101,101,101,101,101,101,101,101,101,101,0
+    ];
+    let uiTextTm: [i16] = [19,30,42,45,32,79,0,54,54,54,0,0,114,114,114];
+    let background: gfx::Layer = gfx::Layer{
+        id: 0,
+        x: 0,
+        y: 0,
+        tilemap_width: 20,
+        tilemap_height: 15,
+        tilemap: bgTilemap,
+        transform: gfx::Transform::SingleMatrixAffine,
+        transformInfo: Some([
+        2.0,0.0,
+        0.0,2.0,
+        ]),
+        loc: Some([80 as i32,60 as i32])
+    };
+    let bush: gfx::Sprite=gfx::Sprite {
+        id: 0,
+        x: 0,
+        y: 176,
+        priority: 2,
+        tilemap_height: 1,
+        tilemap_width: 20,
+        tilemap: [92;20],
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    let player: gfx::Sprite=gfx::Sprite {
+        id: 1,
+        x: 152,
+        y: 112,
+        priority: 3,
+        tilemap_height: 1,
+        tilemap_width: 1,
+        tilemap: [94],
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    let uiBg: gfx::Sprite=gfx::Sprite {
+        id: 2,
+        x: 0,
+        y: 0,
+        priority: 1,
+        tilemap_height: 3,
+        tilemap_width: 12,
+        tilemap: uiBgTm,
+        scale_x: 1.0,
+        scale_y: 1.0,
+    };
+    let uiText: gfx::Sprite=gfx::Sprite {
+        id: 3,
+        x: 8,
+        y: 8,
+        priority: 2,
+        tilemap_height: 1,
+        tilemap_width: 15,
+        tilemap: uiTextTm,
+        scale_x: 1.0,
+        scale_y: 1.0,
+    };
+    gfx::registerLayer(background);
+    gfx::registerSprite(bush);
+    gfx::registerSprite(player);
+    gfx::registerSprite(uiBg);
+    gfx::registerSprite(uiText);
+    let title_file: fs::FileBuf=fs::openFile("linked/title.cbmp");
+    fs::readFile(title_file,0 as i32,None);
+    let title_screen: gfx::Bitmap = cbmp::from_file(title_file);
+    title_screen.priority=1;
+    gfx::registerBitmap(title_screen);
+    while(true){
+        let controls: [bool]=[false;11];
+        gfx::pullControls(controls);
+        if(controls[gfx::Control::Start]){
+            break;
+        };
+        if(sfx::done(theme_sfx)){
+            theme_sfx=sfx::play(theme_file, None, Some(track_vol));
+        };
+        gfx::render();
+    };
+    gfx::removeBitmap(title_screen);
+    let nextPipeId: i16 = 0;
+    let count: i16 = 0;
+    let pipes: [gfx::Sprite] = mem::alloc((16*2) as i32);
+    let pipeHoles: [i16] = [0;16];
+    let pipeScored: [bool] = [false;16];
+    let coins: [gfx::Sprite] = mem::alloc((16*2) as i32);
+    let coinActive: [bool] = [false;16];
+    let velocityY: i16 = 0;
+    let flapLatch: bool = false;
+    let score: i16 = 0;
+    let lives: i16 = 3;
+    let hit: i16 = 100;
+    while(true){
+        if(sfx::done(theme_sfx)){
+            theme_sfx=sfx::play(theme_file, None, Some(track_vol));
+        };
+        updateScore(score,uiText.tilemap);
+        let controls: [bool]=[false;11];
+        gfx::pullControls(controls);
+        gfx::render();
+        let registeredPipes: i16 = nextPipeId;
+        if(registeredPipes>16){
+            registeredPipes = 16;
+        };
+        if(count%200==0){
+            let slot: i16 = nextPipeId%16;
+            if(slot<registeredPipes){
+                gfx::removeSprite(pipes[slot]);
+                mem::free(pipes[slot].tilemap as &void);
+                mem::free(pipes[slot] as &void);
+                if(coinActive[slot]){
+                    gfx::removeSprite(coins[slot]);
+                    mem::free(coins[slot].tilemap as &void);
+                    mem::free(coins[slot] as &void);
+                    coinActive[slot] = false;
+                };
+            };
+            let top: i16=random(seed_ptr, 2, 8);
+            let pipe: gfx::Sprite=genPipe(top,9-top,slot+4);
+            pipeHoles[slot] = top;
+            pipeScored[slot] = false;
+            let buf: &void = mem::alloc(12 as i32);
+            mem::copy(pipe as &void, buf, 12 as i32, 0 as i32);
+            pipes[slot] = buf as gfx::Sprite;
+            gfx::registerSprite(pipes[slot]);
+            if((nextPipeId>0) and (random(seed_ptr, 0, 7)==0)){
+                let prevSlot: i16 = (slot+15)%16;
+                let coin: gfx::Sprite = genCoin(
+                    (pipes[slot].x + 72),
+                    ((((pipeHoles[prevSlot] + 2) * 16) + (((top + 2) * 16))) / 2) - 8,
+                    slot + 20
+                );
+                let coinBuf: &void = mem::alloc(12 as i32);
+                mem::copy(coin as &void, coinBuf, 12 as i32, 0 as i32);
+                coins[slot] = coinBuf as gfx::Sprite;
+                gfx::registerSprite(coins[slot]);
+                coinActive[slot] = true;
+            };
+            nextPipeId = nextPipeId + 1;
+
+        };
+        if(count%2==0){
+            for(let i: i16 = 0; i < registeredPipes; i = i + 1) {
+                pipes[i].x = pipes[i].x - 1;
+                if(coinActive[i]){
+                    coins[i].x = coins[i].x - 1;
+                };
+            };
+        };
+        for(let i: i16 = 0; i < registeredPipes; i = i + 1) {
+            if(coinActive[i] and sprite_hits_player(coins[i], player)){
+                gfx::removeSprite(coins[i]);
+                mem::free(coins[i].tilemap as &void);
+                mem::free(coins[i] as &void);
+                coinActive[i] = false;
+                score = score + 5;
+                lives= lives+1;
+                audio::loadSound(9,coin_file.buf as [f32],coin_file.len);
+            };
+            if(pipeScored[i]==false){
+                if((pipes[i].x + 32)<player.x){
+                    score = score + 1;
+                    pipeScored[i] = true;
+                    audio::loadSound(9,coin_file.buf as [f32],coin_file.len);
+                };
+            };
+            if(pipe_hits_player(pipes[i], pipeHoles[i], player) and hit==0){
+                lives = lives - 1;
+                hit = 100;
+                audio::loadSound(8,hurt_file.buf as [f32],hurt_file.len);
+                if(score>0){
+                score = score - 1;};
+            };
+        };
+        if(lives==3){
+            uiText.tilemap[14]=114;
+            uiText.tilemap[13]=114;
+            uiText.tilemap[12]=114;
+        };
+        if(lives==2){
+            uiText.tilemap[14]=113;
+            uiText.tilemap[13]=114;
+            uiText.tilemap[12]=114;
+        };
+        if(lives==1){
+            uiText.tilemap[13]=113;
+            uiText.tilemap[12]=114;
+        };
+        if(lives==0){
+            uiText.tilemap[12]=113;
+        };
+        if(hit>0){
+            hit = hit - 1;
+        };
+        if(controls[gfx::Control::A] & (!flapLatch)){
+            velocityY = -2;
+        };
+        flapLatch = controls[gfx::Control::A];
+        if((velocityY<2) and (count%10==0)){
+            velocityY = velocityY + 1;
+        };
+        player.y = player.y + velocityY;
+        if(player.y<16){
+            player.y = 16;
+            velocityY = 0;
+        };
+        if(player.y>176){
+            player.y = 176;
+            velocityY = 0;
+            if(hit==0){
+                lives = lives - 1;
+                hit = 100;
+                audio::loadSound(8,hurt_file.buf as [f32],hurt_file.len);
+                if(score>0){
+                    score = score - 1;
+                };
+            };
+        };
+        if(count%10==0){
+            if(player.tilemap[0]==93){
+                player.tilemap[0] = 94;
+            }else{
+                player.tilemap[0] = 93;
+            };
+        };
+        if(lives==0){
+            break;
+        };
+        count = count + 1;
+    };
+    sfx::stop_sfx(theme_sfx);
+    let lose_file: fs::FileBuf=fs::openFile("linked/gameover.cbmp");
+    fs::readFile(lose_file,0 as i32,None);
+    let lose_screen: gfx::Bitmap = cbmp::from_file(lose_file);
+    lose_screen.priority=1;
+    gfx::registerBitmap(lose_screen);
+    while(true){
+        let controls: [bool;11]=[false;11];
+        gfx::pullControls(controls);
+        if(controls[gfx::Control::Start]){
+            break;
+        };
+        gfx::render();
+    };
+    fs::closeFile(hurt_file);
+    fs::closeFile(coin_file);
+    fs::closeFile(lose_file);
+    return;
+}
+fn genPipe(top: i16,bottom: i16,id: i16)->gfx::Sprite{
+    let pipe: [i16]=mem::alloc(((top+1+3+1+bottom)*2) as i32);
+    for(let i: i16 = 0; i < top; i = i + 1) {
+        pipe[(i * 2)] = 102;
+        pipe[(i * 2 + 1)] = 103;
+    };
+    let top_cap_offset: i16 = (top * 2) as i16;
+    pipe[top_cap_offset] = 111;
+    pipe[top_cap_offset + 1] = 112;
+    let gap_offset: i16 = top_cap_offset + 2;
+    pipe[gap_offset] = 0;
+    pipe[gap_offset + 1] = 0;
+    pipe[gap_offset + 2] = 0;
+    pipe[gap_offset + 3] = 0;
+    pipe[gap_offset + 4] = 0;
+    pipe[gap_offset + 5] = 0;
+    let bottom_cap_offset: i16 = gap_offset + 6;
+    pipe[bottom_cap_offset] = 86;
+    pipe[bottom_cap_offset + 1] = 87;
+    let bottom_shaft_offset: i16 = bottom_cap_offset + 2;
+    for(let i: i16 = 0; i < bottom; i = i + 1) {
+        pipe[bottom_shaft_offset + (i * 2)] = 95;
+        pipe[bottom_shaft_offset + (i * 2 + 1)] = 96;
+    };
+    let sprite:gfx::Sprite=gfx::Sprite {
+        id: id,
+        x: 320,
+        y: 0,
+        priority: 0,
+        tilemap_height: 12,
+        tilemap_width: 2,
+        tilemap: pipe,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    return sprite;
+}
+fn init_rand() -> &i32 {
+    let seed_ptr: [i32] = mem::alloc(2 as i32) as [i32];
+    seed_ptr[0]=clock::read()+(1 as i32);
+    return seed_ptr as &i32;
+}
+
+fn random(seed_ptr: &i32, start: i16, end: i16) -> i16 {
+    let seed: [i32] = seed_ptr as [i32];
+    let state: i32 = seed[0] % (32768 as i32);
+    if (state < (0 as i32)) {
+        state = state + (32768 as i32);
+    };
+    let next_state: i32 =
+        ((state * (25173 as i32)) + (13849 as i32)) % (32768 as i32);
+    let n: i16 = next_state as i16;
+    seed[0] = next_state;
+    let range: i16 = end - start + (1 as i16);
+    if (range <= 0 as i16) {
+        return start;
+    };
+    return start + (n % range);
+}
+fn pipe_hits_player(pipe: gfx::Sprite, top: i16, player: gfx::Sprite)->bool{
+    let pipe_left: f32 = pipe.x as f32;
+    let pipe_right: f32 = pipe_left + ((pipe.tilemap_width as f32) * 8.0 * pipe.scale_x);
+    let player_left: f32 = player.x as f32;
+    let player_right: f32 = player_left + ((player.tilemap_width as f32) * 8.0 * player.scale_x);
+    let player_top: f32 = player.y as f32;
+    let player_bottom: f32 = player_top + ((player.tilemap_height as f32) * 8.0 * player.scale_y);
+    let gap_top: f32 = ((top + 1) as f32) * 16.0;
+    let gap_bottom: f32 = ((top + 4) as f32) * 16.0;
+    let horizontal: bool = (player_left < pipe_right) & (player_right > pipe_left);
+    let hit_top: bool = horizontal & (player_top < gap_top);
+    let hit_bottom: bool = horizontal & (player_bottom > gap_bottom);
+    return hit_top | hit_bottom;
+}
+fn sprite_hits_player(a: gfx::Sprite, b: gfx::Sprite)->bool{
+    let check1: bool = (a.x as f32)<(b.x as f32+((b.tilemap_width as f32)*8.0*b.scale_x));
+    let check2: bool = ((a.x as f32+((a.tilemap_width as f32)*8.0*a.scale_x))>(b.x as f32));
+    let check3: bool = ((a.y as f32)<((b.y as f32)+((b.tilemap_height as f32)*8.0*b.scale_y)));
+    let check4: bool = ((a.y as f32+((a.tilemap_height as f32)*8.0*a.scale_y))>(b.y as f32));
+    return check1 & check2 & check3 & check4;
+}
+fn genCoin(x: i16, y: i16, id: i16)->gfx::Sprite{
+    let coin: [i16] = mem::alloc(1 as i32) as [i16];
+    coin[0] = 99;
+    let sprite: gfx::Sprite = gfx::Sprite {
+        id: id,
+        x: x,
+        y: y,
+        priority: 1,
+        tilemap_height: 1,
+        tilemap_width: 1,
+        tilemap: coin,
+        scale_x: 2.0,
+        scale_y: 2.0,
+    };
+    return sprite;
+}
+fn convertNumToTiles(num: i16,digits: [i16],len: i16)->void{
+    let i: i16=len-1;
+    while(num>0 or i!=-1){
+        digits[i]=(num%10)+54;
+        num=num/10;
+        i=i-1;
+    };
+    return;
+}
+fn updateScore(score: i16,uiTm: [i16])->void{
+    let digits: [i16] = [0;3];
+    convertNumToTiles(score,digits,3);
+    uiTm[7]=digits[0];
+    uiTm[8]=digits[1];
+    uiTm[9]=digits[2];
+    return;
+}

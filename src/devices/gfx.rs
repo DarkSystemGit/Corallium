@@ -2,14 +2,8 @@ use crate::util::{convert_i16_to_i32, convert_i16_to_u32};
 use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
 use gamepads::Gamepads;
-use minifb::{self, Icon, Key, Scale, Window, WindowOptions};
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    thread,
-    time::{Duration, Instant},
-    vec,
-};
+use pixelscreen::{Key, PixelFormat, Scale, Window};
+use std::{cell::RefCell, rc::Rc, thread, time::Duration, time::Instant, vec};
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
     //Types
     //struct Atlas{
@@ -601,12 +595,13 @@ pub struct GraphicsSystem {
     sprites: (Point, Vec<Option<Sprite>>),
     bitmaps: Vec<RegisteredBitmap>,
     atlas: Rc<RefCell<TileAtlas>>,
-    display: Display,
+    pub display: Display,
     controls: Vec<Controls>,
     ptrs: GraphicsPtrs,
     queuedPixels: Vec<(usize, usize, u32)>,
     last_render_at: Option<Instant>,
     delta_time_ms: i32,
+    min_frame_ms: i32,
     gamepads: debug_ignore::DebugIgnore<Gamepads>,
 }
 #[derive(Debug, Clone)]
@@ -642,21 +637,77 @@ enum Controls {
 
 fn map_key_to_control(key: Key) -> Option<Controls> {
     match key {
-        Key::A => Some(Controls::A),
-        Key::S => Some(Controls::B),
-        Key::D => Some(Controls::X),
-        Key::F => Some(Controls::Y),
-        Key::Left => Some(Controls::Left),
-        Key::Right => Some(Controls::Right),
-        Key::Up => Some(Controls::Up),
-        Key::Down => Some(Controls::Down),
+        Key::KeyA => Some(Controls::A),
+        Key::KeyS => Some(Controls::B),
+        Key::KeyD => Some(Controls::X),
+        Key::KeyF => Some(Controls::Y),
+        Key::ArrowLeft => Some(Controls::Left),
+        Key::ArrowRight => Some(Controls::Right),
+        Key::ArrowUp => Some(Controls::Up),
+        Key::ArrowDown => Some(Controls::Down),
         Key::Space => Some(Controls::Start),
-        Key::Q => Some(Controls::LeftTrigger),
-        Key::E => Some(Controls::RightTrigger),
+        Key::KeyQ => Some(Controls::LeftTrigger),
+        Key::KeyE => Some(Controls::RightTrigger),
         _ => None,
     }
 }
 impl GraphicsSystem {
+    /// Target frame rate: gates how often `render()` will actually pace
+    /// out a call (see `render()`), and is also what used to be passed to
+    /// minifb's `set_target_fps` (now unused by `Display` itself, but kept
+    /// as the one source of truth for both).
+    const TARGET_FPS: usize = 65;
+    pub(crate) fn new_with_display(display: Display, resolution: [u32; 2]) -> GraphicsSystem {
+        let mut gs = GraphicsSystem {
+            background_layers: vec![],
+            sprites: ([0, 0], Vec::new()),
+            bitmaps: vec![],
+            atlas: Rc::new(RefCell::new(TileAtlas::new())),
+            gamepads: Gamepads::new().into(),
+            display,
+            controls: Vec::new(),
+            ptrs: GraphicsPtrs {
+                sprites: vec![],
+                layers: vec![],
+                bitmaps: vec![],
+                atlas: 0,
+            },
+            queuedPixels: vec![],
+            last_render_at: None,
+            delta_time_ms: 0,
+            min_frame_ms: (1000 / Self::TARGET_FPS.max(1)) as i32,
+        };
+        gs.background_layers.extend([
+            BGLayer::new(TileMap::new(
+                gs.atlas.clone(),
+                (resolution[0] / 8) as usize,
+                (resolution[1] / 8) as usize,
+            )),
+            BGLayer::new(TileMap::new(
+                gs.atlas.clone(),
+                (resolution[0] / 8) as usize,
+                (resolution[1] / 8) as usize,
+            )),
+            BGLayer::new(TileMap::new(
+                gs.atlas.clone(),
+                (resolution[0] / 8) as usize,
+                (resolution[1] / 8) as usize,
+            )),
+        ]);
+        gs
+    }
+    pub fn reset_with_same_display(&mut self, resolution: [u32; 2]) -> GraphicsSystem {
+        let old_display = std::mem::replace(
+            &mut self.display,
+            Display::new(
+                resolution[0] as usize,
+                resolution[1] as usize,
+                "Corallium",
+                Scale::X4,
+            ),
+        );
+        GraphicsSystem::new_with_display(old_display, resolution)
+    }
     pub fn new(resolution: [u32; 2]) -> GraphicsSystem {
         let mut gs = GraphicsSystem {
             background_layers: vec![],
@@ -668,7 +719,6 @@ impl GraphicsSystem {
                 resolution[0] as usize,
                 resolution[1] as usize,
                 "Corallium",
-                65,
                 Scale::X4,
             ),
             controls: Vec::new(),
@@ -681,6 +731,7 @@ impl GraphicsSystem {
             queuedPixels: vec![],
             last_render_at: None,
             delta_time_ms: 0,
+            min_frame_ms: (1000 / Self::TARGET_FPS.max(1)) as i32,
         };
         gs.background_layers.extend([
             BGLayer::new(TileMap::new(
@@ -763,8 +814,15 @@ impl GraphicsSystem {
         self.background_layers[layer as usize].tilemap.get_tile(loc);
     }
     pub fn render(&mut self) {
-        const MIN_FRAME_MS: i32 = 15;
-        let should_blit = (self.delta_time_ms >= MIN_FRAME_MS) || self.last_render_at.is_none();
+        if let Some(last) = self.last_render_at {
+            let elapsed_ms = last.elapsed().as_millis().min(i32::MAX as u128) as i32;
+            if elapsed_ms < self.min_frame_ms {
+                thread::sleep(Duration::from_millis(
+                    (self.min_frame_ms - elapsed_ms) as u64,
+                ));
+            }
+        }
+
         let now = Instant::now();
         self.delta_time_ms = self
             .last_render_at
@@ -818,12 +876,10 @@ impl GraphicsSystem {
             self.display.buffer[pix.1 * self.display.width + pix.0] = pix.2;
         }
 
-        if should_blit {
-            self.last_render_at = Some(now);
-            self.display.render();
-        } else {
-            self.display.update();
-        }
+        // Pacing above already guarantees at least MIN_FRAME_MS has passed,
+        // so every call now blits -- no more skip-vs-draw branch needed.
+        self.display.render();
+
         self.controls.clear();
         for k in self.display.pull_keys() {
             if let Some(control) = map_key_to_control(k) {
@@ -913,7 +969,7 @@ impl Sprite {
     }
 }
 #[derive(Debug)]
-struct Display {
+pub(crate) struct Display {
     width: usize,
     height: usize,
     buffer: Vec<u32>, //[[u32;width];height]
@@ -1161,22 +1217,11 @@ impl TileAtlas {
     }
 }
 impl Display {
-    fn new(width: usize, height: usize, title: &str, target_fps: usize, scale: Scale) -> Self {
-        let mut window = Window::new(
-            title,
-            width,
-            height,
-            WindowOptions {
-                scale_mode: minifb::ScaleMode::Pillarbox,
-                scale,
-                resize: true,
-                ..WindowOptions::default()
-            },
-        )
-        .expect("Unable to open the window");
-
-        window.set_target_fps(target_fps);
-
+    fn new(width: usize, height: usize, title: &str, scale: Scale) -> Self {
+        let mut window = Window::new_with_scale(title, width as u32, height as u32, scale)
+            .expect("Unable to open the window");
+        window.set_pixel_format(PixelFormat::Rrggbbaa);
+        window.set_resizable(true);
         Self {
             width,
             height,
@@ -1185,21 +1230,11 @@ impl Display {
         }
     }
     fn render(&mut self) {
-        if self.window.is_open() {
-            self.window
-                .update_with_buffer(
-                    self.buffer
-                        .iter()
-                        .map(|x| x >> 8)
-                        .collect::<Vec<u32>>()
-                        .as_slice(),
-                    self.width,
-                    self.height,
-                )
-                .err();
-        } else {
+        if !self.window.is_open() {
             return;
         }
+        self.window.update();
+        self.window.render(&self.buffer).err();
     }
     fn pull_keys(&self) -> Vec<Key> {
         self.window.get_keys()
@@ -1210,6 +1245,7 @@ impl Display {
     fn clear(&mut self) {
         self.buffer.fill(0);
     }
+    #[allow(dead_code)]
     fn update(&mut self) {
         self.window.update();
     }

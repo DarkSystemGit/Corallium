@@ -30,7 +30,7 @@ fn main()->void{
     let theme_file: fs::FileBuf=fs::openFile("linked/pong.csfx");
     fs::readFile(theme_file,0 as i32,None);
     audio::masterVolume(2 as i32);
-    let theme_sfx: sfx::SfxInfo = sfx::play(theme_file, None);
+    let theme_sfx: sfx::SfxInfo = sfx::play(theme_file, None, None);
     let title_file: fs::FileBuf=fs::openFile("linked/title.cbmp");
     fs::readFile(title_file,0 as i32,None);
     let title_screen: gfx::Bitmap = cbmp::from_file(title_file);
@@ -110,7 +110,7 @@ fn main()->void{
     gfx::registerSprite(ball);
     while(true){
         if(sfx::done(theme_sfx)){
-            theme_sfx=sfx::play(theme_file, None);
+            theme_sfx=sfx::play(theme_file, None, None);
         };
         let controls: [bool;11]=[false;11];
         gfx::pullControls(controls);
@@ -130,7 +130,7 @@ fn main()->void{
     let trueBallY: f32=ball.y as f32;
     while(true){
         if(sfx::done(theme_sfx)){
-            theme_sfx=sfx::play(theme_file, None);
+            theme_sfx=sfx::play(theme_file, None, None);
         };
         let controls: [bool;11]=[false;11];
         gfx::pullControls(controls);

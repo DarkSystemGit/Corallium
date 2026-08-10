@@ -83,12 +83,12 @@ fn main()->void{
     let menu: fs::FileBuf=fs::openFile("linked/menu_theme.csfx");
     fs::readFile(menu,0 as i32,None);
     audio::masterVolume(1 as i32);
-    let menu_sfx: sfx::SfxInfo = sfx::play(menu, None);
+    let menu_sfx: sfx::SfxInfo = sfx::play(menu, None, None);
     let menu_delay: i32 = 160000 as i32;
     let menu_restart_at: i32 = audio::masterClock() + (menu_sfx.len * 32 as i32) + menu_delay;
     for(let z: i16 = 0; true; z = z + 1){
         if((sfx::done(menu_sfx)) and (audio::masterClock() >= menu_restart_at)){
-            menu_sfx=sfx::play(menu, None);
+            menu_sfx=sfx::play(menu, None, None);
             menu_restart_at = audio::masterClock() + (menu_sfx.len * 32 as i32) + menu_delay;
         };
         gfx::render();
@@ -121,6 +121,10 @@ fn main()->void{
             hold = hold - 1;
         };
         if(controls[gfx::Control::A]){
+            sfx::stop_sfx(menu_sfx);
+            for(let i: i16=0;i<50;i=i+1){
+            //wait for a few frames to let the audio stop before loading the next program
+            gfx::render();};
             let game: Game = games.array[selected as i32];
             gfx::removeBitmap(fade);
             gfx::removeBitmap(background);
@@ -135,7 +139,6 @@ fn main()->void{
             fs::closeFile(atlas_file);
             fs::closeFile(startup);
             fs::closeFile(boot_screen_file);
-            sfx::stop_sfx(menu_sfx);
             audio::masterVolume(100 as i32);
             let cart_file: fs::FileBuf = fs::openFile(game.fileName);
             loader::loadProgram(cart_file.id, cart_file.offset);

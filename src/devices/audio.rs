@@ -4,13 +4,13 @@ use crate::util::unpack_float;
 use crate::vm::{DataType, Machine};
 use arc_swap::{ArcSwap, ArcSwapAny};
 use hound;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::{
     collections::HashMap,
     io::Cursor,
     sync::{
-        atomic::{AtomicI32, Ordering::Relaxed},
         Arc, Mutex,
+        atomic::{AtomicI32, Ordering::Relaxed},
     },
     vec,
 };

@@ -703,7 +703,7 @@ impl GraphicsSystem {
                 resolution[0] as usize,
                 resolution[1] as usize,
                 "Corallium",
-                Scale::X4,
+                Scale::FitScreen,
             ),
         );
         GraphicsSystem::new_with_display(old_display, resolution)
@@ -719,7 +719,7 @@ impl GraphicsSystem {
                 resolution[0] as usize,
                 resolution[1] as usize,
                 "Corallium",
-                Scale::X4,
+                Scale::FitScreen,
             ),
             controls: Vec::new(),
             ptrs: GraphicsPtrs {

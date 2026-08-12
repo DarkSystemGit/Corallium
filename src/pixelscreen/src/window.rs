@@ -36,8 +36,8 @@ pub enum Scale {
     X8,
     X16,
     X32,
-    /// Pick the largest whole-number multiple that fits on the primary
-    /// monitor (falls back to `X1` if monitor info isn't available).
+    /// Opens the window maximized to fill the screen while keeping the
+    /// standard OS window borders and title bar.
     FitScreen,
 }
 
@@ -60,7 +60,7 @@ impl Scale {
                 } = monitor.size();
                 let fx = (mw / buf_width.max(1)).max(1);
                 let fy = (mh / buf_height.max(1)).max(1);
-                fx.min(fy).max(1)
+                fx.min(fy).max(1) / 2
             }
         }
     }
@@ -130,13 +130,23 @@ impl Window {
         let factor = scale.factor(buf_width, buf_height, &event_loop);
         let initial_size = LogicalSize::new(buf_width.max(1) * factor, buf_height.max(1) * factor);
 
-        let winit_window = Arc::new(
-            WindowBuilder::new()
-                .with_title(title)
-                .with_inner_size(initial_size)
-                .with_resizable(true)
-                .build(&event_loop)?,
-        );
+        let mut builder = WindowBuilder::new()
+            .with_title(title)
+            .with_inner_size(initial_size)
+            .with_resizable(true);
+
+        if scale == Scale::FitScreen {
+            // Suggest maximization to the OS during creation
+            builder = builder.with_maximized(true);
+        }
+
+        let winit_window = Arc::new(builder.build(&event_loop)?);
+
+        if scale == Scale::FitScreen {
+            // Force maximization after creation to override OS quirks where
+            // `with_inner_size` might cancel out the maximized state.
+            winit_window.set_maximized(true);
+        }
 
         let renderer = Renderer::new(winit_window.clone(), buf_width, buf_height)?;
 

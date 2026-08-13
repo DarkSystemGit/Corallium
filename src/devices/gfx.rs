@@ -225,8 +225,30 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                         gamepads::Button::DPadDown => rkeys.push(Controls::Down),
                         gamepads::Button::DPadLeft => rkeys.push(Controls::Left),
                         gamepads::Button::DPadRight => rkeys.push(Controls::Right),
+
                         _ => {}
                     }
+                }
+                let axis_threshold = 0.5;
+                if (gamepad.left_stick_x() > axis_threshold) {
+                    rkeys.push(Controls::Right);
+                } else if (gamepad.left_stick_x() < -axis_threshold) {
+                    rkeys.push(Controls::Left);
+                }
+                if (gamepad.left_stick_y() > axis_threshold) {
+                    rkeys.push(Controls::Down);
+                } else if (gamepad.left_stick_y() < -axis_threshold) {
+                    rkeys.push(Controls::Up);
+                }
+                if (gamepad.right_stick_x() > axis_threshold) {
+                    rkeys.push(Controls::Right);
+                } else if (gamepad.right_stick_x() < -axis_threshold) {
+                    rkeys.push(Controls::Left);
+                }
+                if (gamepad.right_stick_y() > axis_threshold) {
+                    rkeys.push(Controls::Down);
+                } else if (gamepad.right_stick_y() < -axis_threshold) {
+                    rkeys.push(Controls::Up);
                 }
             }
             let mut key_b = vec![0; 11];

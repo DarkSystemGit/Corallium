@@ -236,9 +236,9 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     rkeys.push(Controls::Left);
                 }
                 if (gamepad.left_stick_y() > axis_threshold) {
-                    rkeys.push(Controls::Down);
-                } else if (gamepad.left_stick_y() < -axis_threshold) {
                     rkeys.push(Controls::Up);
+                } else if (gamepad.left_stick_y() < -axis_threshold) {
+                    rkeys.push(Controls::Down);
                 }
                 if (gamepad.right_stick_x() > axis_threshold) {
                     rkeys.push(Controls::Right);
@@ -246,9 +246,9 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     rkeys.push(Controls::Left);
                 }
                 if (gamepad.right_stick_y() > axis_threshold) {
-                    rkeys.push(Controls::Down);
-                } else if (gamepad.right_stick_y() < -axis_threshold) {
                     rkeys.push(Controls::Up);
+                } else if (gamepad.right_stick_y() < -axis_threshold) {
+                    rkeys.push(Controls::Down);
                 }
             }
             let mut key_b = vec![0; 11];

@@ -38,7 +38,7 @@ pub fn run_cases() {
                     data: vec![],
                 }] as Disk;
                 exe.build(0, &mut disk, debug);
-                machine.set_disk(disk);
+                machine.set_disk(disk, None);
                 machine.run();
             }
             TestType::Internal(ref func) => func(&mut machine),
@@ -50,7 +50,7 @@ pub fn run_cases() {
                     data: vec![],
                 }] as Disk;
                 exe.build(0, &mut disk, debug);
-                machine.set_disk(disk);
+                machine.set_disk(disk, None);
                 if debug {
                     for log in logs {
                         println!("{}", log);

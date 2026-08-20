@@ -776,6 +776,7 @@ pub struct Machine {
     pub freq: (u64, Instant),
     pub last_cycle: Instant,
     pub reset: bool,
+    pub disk_path: Option<String>,
 }
 impl Machine {
     pub fn new(debug: bool) -> Machine {
@@ -789,6 +790,7 @@ impl Machine {
             last_cycle: Instant::now(),
             debug_console: debug,
             reset: false,
+            disk_path: None,
         };
         m
     }
@@ -1037,8 +1039,9 @@ impl Machine {
             }
         }
     }
-    pub fn set_disk(&mut self, disk: Disk) {
+    pub fn set_disk(&mut self, disk: Disk, path: Option<String>) {
         self.devices[0].contents = RawDevice::Disk(disk);
+        self.disk_path = path;
     }
 }
 

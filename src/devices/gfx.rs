@@ -3,8 +3,11 @@ use crate::vm::{DataType, Machine, unpack_dt};
 use crate::{devices::RawDevice, util::unpack_float};
 use gamepads::Gamepads;
 use pixelscreen::{Key, PixelFormat, Scale, Window};
-use std::{cell::RefCell, rc::Rc, thread, time::Duration, time::Instant, vec};
+use std::{cell::RefCell, process, rc::Rc, thread, time::Duration, time::Instant, vec};
+
 pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
+    let on_console = false;
+    let menu_binary = "/home/main/corallium_config/target/release/corallium_config";
     //Types
     //struct Atlas{
     //  i16 len
@@ -225,7 +228,7 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                         gamepads::Button::DPadDown => rkeys.push(Controls::Down),
                         gamepads::Button::DPadLeft => rkeys.push(Controls::Left),
                         gamepads::Button::DPadRight => rkeys.push(Controls::Right),
-
+                        gamepads::Button::Mode => rkeys.push(Controls::Home),
                         _ => {}
                     }
                 }
@@ -286,6 +289,17 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
                     }
                     Controls::RightTrigger => {
                         key_b[10] = 1;
+                    }
+                    Controls::Home => {
+                        if on_console {
+                            let mut child = process::Command::new(menu_binary)
+                                .spawn()
+                                .expect("Failed to spawn menu process");
+                            let status = child.wait().expect("Failed to wait on menu");
+                            if let Some(4) = status.code() {
+                                machine.reset = true;
+                            }
+                        }
                     }
                 }
             }
@@ -655,6 +669,7 @@ enum Controls {
     Start,
     LeftTrigger,
     RightTrigger,
+    Home,
 }
 
 fn map_key_to_control(key: Key) -> Option<Controls> {
@@ -670,6 +685,7 @@ fn map_key_to_control(key: Key) -> Option<Controls> {
         Key::Space => Some(Controls::Start),
         Key::KeyQ => Some(Controls::LeftTrigger),
         Key::KeyE => Some(Controls::RightTrigger),
+        Key::Escape => Some(Controls::Home),
         _ => None,
     }
 }

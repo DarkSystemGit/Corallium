@@ -42,14 +42,16 @@ pub fn driver(machine: &mut Machine, command: i16, device_id: usize) {
         let data = machine
             .memory
             .read_range(buf..(buf + len as usize), &machine);
-        (if let RawDevice::Disk(disk) = &mut machine.devices[device_id].contents {
+        let disk = (if let RawDevice::Disk(disk) = &mut machine.devices[device_id].contents {
             Some(disk)
         } else {
             None
         })
-        .expect("Could not get disk")[section]
-            .data[addr as usize..(addr + len) as usize]
-            .copy_from_slice(data.as_slice());
+        .expect("Could not get disk");
+        disk[section].data[addr as usize..(addr + len) as usize].copy_from_slice(data.as_slice());
+        if let Some(disk_path) = machine.disk_path.clone() {
+            save_disk(disk, disk_path);
+        }
         if machine.debug {
             println!(
                 "IO.disk.write %[{} {}] -> disk.%[{} {}]",

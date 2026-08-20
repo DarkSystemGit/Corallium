@@ -265,7 +265,7 @@ fn compile_run() {
     exe.build(0, &mut disk, debug);
     append_linked_files(&args, &mut disk);
     let mut machine = Machine::new(debug);
-    machine.set_disk(disk);
+    machine.set_disk(disk, None);
     machine.run();
     /*if args.contains(&"--save-disk".to_string()) {
         save_disk(
@@ -289,7 +289,7 @@ fn run_bytecode() {
     let debug = args.contains(&String::from("--debug"));
     let disk = load_disk(file).expect("Failed to read disk image");
     let mut machine = Machine::new(debug);
-    machine.set_disk(disk);
+    machine.set_disk(disk, Some(file.to_string()));
     machine.run();
     if args.contains(&"--save-disk".to_string()) {
         save_disk(

@@ -128,6 +128,7 @@ fn writeFile(buf: FileBuf)->void{
     return;
 }
 fn closeFile(buf: FileBuf)->void{
+    writeFile(buf);
     mem::free(buf.buf);
     buf.id=-1;
     buf.len=0 as i32;
